@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: beyla
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: beyla
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: beyla
+rules:
+  # Beyla decorates flows with workload identity by watching these
+  # resources. ReplicaSets/workload kinds are needed to walk Pod -> owner
+  # (k8s_*_owner_name); Services and Nodes are separate valid owner types
+  # Beyla can resolve a flow endpoint to (confirmed in a live run: traffic
+  # terminating at a ClusterIP resolves k8s_dst_owner_type="Service", and
+  # node-to-node traffic resolves to owner_type="Node").
+  - apiGroups: [""]
+    resources: [pods, services, nodes]
+    verbs: [get, list, watch]
+  - apiGroups: ["apps"]
+    resources: [replicasets, deployments, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: beyla
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: beyla
+subjects:
+  - kind: ServiceAccount
+    name: beyla
+    namespace: monitoring

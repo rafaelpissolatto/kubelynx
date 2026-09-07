@@ -1,0 +1,89 @@
+# Two-namespace client/server pair so KubeLynx's namespace picker and
+# cross-namespace edges have something real to render.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-backend
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-frontend
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: demo-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: demo-backend
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 80
+      targetPort: 80
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: demo-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: curl
+          image: curlimages/curl:8.11.0
+          command: [sh, -c]
+          # Network-only traffic generator: KubeLynx and this dev cluster's
+          # Beyla config only capture L3/L4 flow data, not HTTP routes, so
+          # there's no reason to vary the request path.
+          args:
+            - |
+              while true; do
+                curl -s -o /dev/null http://backend.demo-backend.svc.cluster.local/
+                sleep 1
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi

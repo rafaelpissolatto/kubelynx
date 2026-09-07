@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: beyla-config
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: beyla
+data:
+  beyla-config.yml: |
+    attributes:
+      kubernetes:
+        enable: true
+        # Cosmetic label only (not used for ServiceMonitor discovery or
+        # querying) — intentionally not wired to the Makefile's
+        # overridable CLUSTER_NAME.
+        cluster_name: kubelynx-dev
+      # KubeLynx's spec requires owner name/type, namespace, transport
+      # (protocol), destination port, and direction on every flow series.
+      # None of these are in Beyla's default attribute set except owner.name
+      # and namespace, so they're selected explicitly here.
+      # Keep this list in sync with REQUIRED_LABELS in
+      # dev/scripts/validate.sh (dotted names here become underscored
+      # Prometheus label names there, e.g. k8s.src.owner.name -> k8s_src_owner_name).
+      select:
+        beyla_network_flow_bytes:
+          include:
+            - k8s.src.owner.name
+            - k8s.src.namespace
+            - k8s.src.owner.type
+            - k8s.dst.owner.name
+            - k8s.dst.namespace
+            - k8s.dst.owner.type
+            - transport
+            - dst.port
+            - direction
+
+    # Network-only: KubeLynx doesn't consume Beyla's application/HTTP
+    # instrumentation, so there's no `discovery.services` scoping and no
+    # `application` feature below — just L3/L4 flow capture.
+    network:
+      enable: true
+
+    prometheus_export:
+      port: 9090
+      path: /metrics
+      features:
+        - network

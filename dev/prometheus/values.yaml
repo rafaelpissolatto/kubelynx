@@ -1,0 +1,37 @@
+# kube-prometheus-stack values for the KubeLynx dev cluster.
+# KubeLynx only needs Prometheus itself with Beyla's network flow metrics in
+# it — no Alertmanager, Grafana, node-exporter, or kube-state-metrics.
+alertmanager:
+  enabled: false
+
+grafana:
+  enabled: false
+
+nodeExporter:
+  enabled: false
+
+kubeStateMetrics:
+  enabled: false
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+prometheus:
+  prometheusSpec:
+    # Beyla's ServiceMonitor is applied separately from this Helm release, so
+    # it won't carry this release's selector labels. Discover every
+    # ServiceMonitor in the cluster instead of scoping to this release's own.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    retention: 6h
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
