@@ -1,0 +1,93 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #0f1019;
+  color: #e6e6ef;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+.app__header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 24px;
+  height: 56px;
+  flex: none;
+  border-bottom: 1px solid #23232f;
+}
+
+.app__brand {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.app__namespace {
+  font-size: 13px;
+  color: #9494a8;
+  background: #1a1a24;
+  border: 1px solid #2a2a38;
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+
+.app__summary {
+  font-size: 13px;
+  color: #9494a8;
+}
+
+.app__canvas {
+  flex: 1;
+  position: relative;
+}
+
+.app__status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #9494a8;
+  font-size: 14px;
+}
+
+.app__status--error {
+  color: #f28b82;
+}
+
+.workload-node {
+  background: #1a1a24;
+  border: 1px solid #2a2a38;
+  border-radius: 8px;
+  padding: 10px 14px;
+  min-width: 180px;
+  display: grid;
+  gap: 6px;
+}
+
+.workload-node__name {
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.workload-node__badge {
+  justify-self: start;
+  font:
+    10px ui-monospace,
+    Menlo,
+    monospace;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #262636;
+  color: #b3b3c6;
+}
