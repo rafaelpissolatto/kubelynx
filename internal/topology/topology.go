@@ -18,12 +18,12 @@ const metricName = "beyla_network_flow_bytes_total"
 // window is the rolling rate() interval BuildTopology queries over.
 const window = "1m"
 
-// labelOrder fixes the order labels appear in a Flow's Query string, so the
-// same series always produces the same PromQL text.
-var labelOrder = []string{
-	"k8s_src_owner_name", "k8s_src_namespace", "k8s_src_owner_type",
-	"k8s_dst_owner_name", "k8s_dst_namespace", "k8s_dst_owner_type",
-	"transport", "dst_port",
+// edgeKey identifies one logical edge: Beyla captures the same connection at
+// multiple points (once per node's DaemonSet pod, and separately pre/post
+// NAT for Service traffic), so several series can describe the same edge —
+// those get summed into one Flow rather than rendered as duplicates.
+type edgeKey struct {
+	source, target, protocol, port string
 }
 
 // BuildTopology queries Prometheus for beyla_network_flow_bytes_total series
@@ -32,8 +32,12 @@ var labelOrder = []string{
 // edges. A series missing non-identity attributes (protocol, port, ...)
 // still produces an edge, just without the missing label.
 func BuildTopology(ctx context.Context, api promv1.API, namespace string) (Graph, error) {
+	// direction!="response" drops the reverse-traffic half of each
+	// connection, which Beyla reports on a fresh ephemeral dst_port per
+	// connection — without this a single logical flow explodes into one
+	// series per connection instead of settling on the server's port.
 	query := fmt.Sprintf(
-		`rate(%s{k8s_src_namespace=%q}[%s]) or rate(%s{k8s_dst_namespace=%q}[%s])`,
+		`rate(%s{k8s_src_namespace=%q,direction!="response"}[%s]) or rate(%s{k8s_dst_namespace=%q,direction!="response"}[%s])`,
 		metricName, namespace, window, metricName, namespace, window,
 	)
 
@@ -51,7 +55,8 @@ func BuildTopology(ctx context.Context, api promv1.API, namespace string) (Graph
 	}
 
 	nodes := map[string]Workload{}
-	edges := make([]Flow, 0, len(vector))
+	edgeOrder := []edgeKey{}
+	edgeBytes := map[edgeKey]float64{}
 
 	for _, sample := range vector {
 		metric := sample.Metric
@@ -66,29 +71,31 @@ func BuildTopology(ctx context.Context, api promv1.API, namespace string) (Graph
 			continue
 		}
 
-		src := Workload{
-			ID:        workloadID(srcNS, srcName),
+		srcID := workloadID(srcNS, srcName)
+		dstID := workloadID(dstNS, dstName)
+		mergeWorkload(nodes, Workload{
+			ID:        srcID,
 			Name:      srcName,
 			Namespace: srcNS,
-			OwnerKind: string(metric["k8s_src_owner_type"]),
-		}
-		dst := Workload{
-			ID:        workloadID(dstNS, dstName),
+			OwnerKind: normalizeOwnerKind(string(metric["k8s_src_owner_type"])),
+		})
+		mergeWorkload(nodes, Workload{
+			ID:        dstID,
 			Name:      dstName,
 			Namespace: dstNS,
-			OwnerKind: string(metric["k8s_dst_owner_type"]),
-		}
-		nodes[src.ID] = src
-		nodes[dst.ID] = dst
-
-		edges = append(edges, Flow{
-			Source:         src.ID,
-			Target:         dst.ID,
-			Protocol:       string(metric["transport"]),
-			Port:           string(metric["dst_port"]),
-			BytesPerSecond: float64(sample.Value),
-			Query:          edgeQuery(metric),
+			OwnerKind: normalizeOwnerKind(string(metric["k8s_dst_owner_type"])),
 		})
+
+		key := edgeKey{
+			source:   srcID,
+			target:   dstID,
+			protocol: string(metric["transport"]),
+			port:     string(metric["dst_port"]),
+		}
+		if _, seen := edgeBytes[key]; !seen {
+			edgeOrder = append(edgeOrder, key)
+		}
+		edgeBytes[key] += float64(sample.Value)
 	}
 
 	nodeList := make([]Workload, 0, len(nodes))
@@ -96,6 +103,18 @@ func BuildTopology(ctx context.Context, api promv1.API, namespace string) (Graph
 		nodeList = append(nodeList, n)
 	}
 	sort.Slice(nodeList, func(i, j int) bool { return nodeList[i].ID < nodeList[j].ID })
+
+	edges := make([]Flow, 0, len(edgeOrder))
+	for _, key := range edgeOrder {
+		edges = append(edges, Flow{
+			Source:         key.source,
+			Target:         key.target,
+			Protocol:       key.protocol,
+			Port:           key.port,
+			BytesPerSecond: edgeBytes[key],
+			Query:          edgeQuery(nodes[key.source], nodes[key.target], key.protocol, key.port),
+		})
+	}
 	sort.Slice(edges, func(i, j int) bool {
 		if edges[i].Source != edges[j].Source {
 			return edges[i].Source < edges[j].Source
@@ -112,14 +131,48 @@ func workloadID(namespace, name string) string {
 	return namespace + "/" + name
 }
 
-// edgeQuery renders the PromQL query string for a single edge, from
-// whichever of labelOrder's labels the series actually carries.
-func edgeQuery(metric model.Metric) string {
-	matchers := make([]string, 0, len(labelOrder))
-	for _, label := range labelOrder {
-		if v := metric[model.LabelName(label)]; v != "" {
-			matchers = append(matchers, fmt.Sprintf("%s=%s", label, strconv.Quote(string(v))))
-		}
+// mergeWorkload records w in nodes, preferring an existing entry's OwnerKind
+// only when w doesn't have one — so one capture point's degraded attributes
+// don't blank out a kind another capture point already resolved.
+func mergeWorkload(nodes map[string]Workload, w Workload) {
+	existing, ok := nodes[w.ID]
+	if !ok || existing.OwnerKind == "" {
+		nodes[w.ID] = w
+		return
 	}
-	return fmt.Sprintf("rate(%s{%s}[%s])", metricName, strings.Join(matchers, ","), window)
+	if w.OwnerKind == "" {
+		w.OwnerKind = existing.OwnerKind
+		nodes[w.ID] = w
+	}
+}
+
+// normalizeOwnerKind treats Beyla's "Service" owner type as unknown: per
+// CONTEXT.md, KubeLynx never labels a graph node "Service" — that value
+// shows up on Beyla's pre-NAT capture of Service-fronted traffic, not a
+// genuine Workload owner kind.
+func normalizeOwnerKind(kind string) string {
+	if kind == "Service" {
+		return ""
+	}
+	return kind
+}
+
+// edgeQuery renders the PromQL query for one aggregated edge: a sum() over
+// every capture point sharing this edge's endpoint identity, protocol, and
+// port (owner-kind and instance/pod labels are deliberately excluded, since
+// those vary by capture point for what's the same logical edge).
+func edgeQuery(src, dst Workload, protocol, port string) string {
+	matchers := []string{
+		fmt.Sprintf("k8s_src_owner_name=%s", strconv.Quote(src.Name)),
+		fmt.Sprintf("k8s_src_namespace=%s", strconv.Quote(src.Namespace)),
+		fmt.Sprintf("k8s_dst_owner_name=%s", strconv.Quote(dst.Name)),
+		fmt.Sprintf("k8s_dst_namespace=%s", strconv.Quote(dst.Namespace)),
+	}
+	if protocol != "" {
+		matchers = append(matchers, fmt.Sprintf("transport=%s", strconv.Quote(protocol)))
+	}
+	if port != "" {
+		matchers = append(matchers, fmt.Sprintf("dst_port=%s", strconv.Quote(port)))
+	}
+	return fmt.Sprintf("sum(rate(%s{%s}[%s]))", metricName, strings.Join(matchers, ","), window)
 }
