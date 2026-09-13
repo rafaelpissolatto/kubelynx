@@ -22,8 +22,16 @@ export interface Graph {
   edges: Flow[]
 }
 
-export async function fetchTopology(namespace: string): Promise<Graph> {
-  const res = await fetch(`/api/topology?namespace=${encodeURIComponent(namespace)}`)
+// ProtocolFilter mirrors the values internal/topology.ValidProtocols accepts
+// for /api/topology?protocol=. Unlike the namespace list, this vocabulary is
+// fixed (not cluster-specific), so it's safe to hardcode on the frontend.
+export type ProtocolFilter = 'all' | 'http' | 'grpc' | 'tcp'
+
+export const PROTOCOL_FILTERS: ProtocolFilter[] = ['all', 'http', 'grpc', 'tcp']
+
+export async function fetchTopology(namespace: string, protocol: ProtocolFilter): Promise<Graph> {
+  const params = new URLSearchParams({ namespace, protocol })
+  const res = await fetch(`/api/topology?${params}`)
   if (!res.ok) {
     throw new Error(`GET /api/topology failed: ${res.status} ${res.statusText}`)
   }

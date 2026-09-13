@@ -16,12 +16,15 @@ import (
 // DefaultNamespace is used when a request to /api/topology omits ?namespace.
 const DefaultNamespace = "default"
 
-// TopologyHandler serves GET /api/topology?namespace=<ns>[,<ns>...], returning
-// the topology.Graph JSON shape scoped to the requested namespaces. More than
-// topology.MaxNamespaces namespaces (topology.AllNamespaces excepted) is
-// rejected — a request that large risks a graph too big for the browser to
-// lay out and render.
-func TopologyHandler(prom promv1.API) http.HandlerFunc {
+// TopologyHandler serves GET /api/topology?namespace=<ns>[,<ns>...]&protocol=<p>,
+// returning the topology.Graph JSON shape scoped to the requested namespaces
+// and protocol. More than topology.MaxNamespaces namespaces
+// (topology.AllNamespaces excepted) is rejected — a request that large risks
+// a graph too big for the browser to lay out and render. protocol defaults
+// to topology.ProtocolAll and must otherwise be one of topology.ValidProtocols;
+// classes governs how topology.ProtocolHTTP and topology.ProtocolGRPC are
+// recognized (see topology.ProtocolClasses).
+func TopologyHandler(prom promv1.API, classes topology.ProtocolClasses) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		namespaces := parseNamespaces(r.URL.Query().Get("namespace"))
 
@@ -30,9 +33,15 @@ func TopologyHandler(prom promv1.API) http.HandlerFunc {
 			return
 		}
 
-		graph, err := topology.BuildTopology(r.Context(), prom, namespaces)
+		protocol := parseProtocol(r.URL.Query().Get("protocol"))
+		if !topology.IsValidProtocol(protocol) {
+			http.Error(w, fmt.Sprintf("invalid protocol %q (valid: %s)", protocol, strings.Join(topology.ValidProtocols, ", ")), http.StatusBadRequest)
+			return
+		}
+
+		graph, err := topology.BuildTopology(r.Context(), prom, namespaces, protocol, classes)
 		if err != nil {
-			slog.ErrorContext(r.Context(), "building topology", "namespaces", namespaces, "error", err)
+			slog.ErrorContext(r.Context(), "building topology", "namespaces", namespaces, "protocol", protocol, "error", err)
 			http.Error(w, "failed to query prometheus", http.StatusBadGateway)
 			return
 		}
@@ -62,4 +71,13 @@ func parseNamespaces(raw string) []string {
 		return []string{DefaultNamespace}
 	}
 	return namespaces
+}
+
+// parseProtocol defaults an absent ?protocol= to topology.ProtocolAll,
+// leaving validation of the result to the caller (topology.IsValidProtocol).
+func parseProtocol(raw string) string {
+	if raw == "" {
+		return topology.ProtocolAll
+	}
+	return raw
 }
