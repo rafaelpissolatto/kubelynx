@@ -197,12 +197,15 @@ body,
   border-radius: 4px;
 }
 
+/* width must match NODE_WIDTH in lib/layout.ts — ELK lays out nodes assuming
+   this exact box size, so a mismatch reintroduces overlap with neighbors. */
 .workload-node {
+  box-sizing: border-box;
   background: #1a1a24;
   border: 1px solid #2a2a38;
   border-radius: 8px;
   padding: 10px 14px;
-  min-width: 180px;
+  width: 220px;
   display: grid;
   gap: 6px;
 }
@@ -210,6 +213,9 @@ body,
 .workload-node__name {
   font-weight: 500;
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workload-node__badge {
