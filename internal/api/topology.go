@@ -25,7 +25,7 @@ func TopologyHandler(prom promv1.API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		namespaces := parseNamespaces(r.URL.Query().Get("namespace"))
 
-		if !isAllNamespaces(namespaces) && len(namespaces) > topology.MaxNamespaces {
+		if !topology.IsAllNamespaces(namespaces) && len(namespaces) > topology.MaxNamespaces {
 			http.Error(w, fmt.Sprintf("too many namespaces requested (max %d)", topology.MaxNamespaces), http.StatusBadRequest)
 			return
 		}
@@ -62,8 +62,4 @@ func parseNamespaces(raw string) []string {
 		return []string{DefaultNamespace}
 	}
 	return namespaces
-}
-
-func isAllNamespaces(namespaces []string) bool {
-	return len(namespaces) == 1 && namespaces[0] == topology.AllNamespaces
 }

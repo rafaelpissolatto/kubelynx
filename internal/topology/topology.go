@@ -29,6 +29,12 @@ const AllNamespaces = "all"
 // risks overwhelming the browser; see issue #14.
 const MaxNamespaces = 6
 
+// IsAllNamespaces reports whether namespaces is the [AllNamespaces]
+// sentinel value, rather than a set of specific namespaces.
+func IsAllNamespaces(namespaces []string) bool {
+	return len(namespaces) == 1 && namespaces[0] == AllNamespaces
+}
+
 // edgeKey identifies one logical edge: Beyla captures the same connection at
 // multiple points (once per node's DaemonSet pod, and separately pre/post
 // NAT for Service traffic), so several series can describe the same edge —
@@ -139,7 +145,7 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string) (Gr
 // omits the namespace filter entirely, matching every namespace observed;
 // otherwise the query matches a series touching any namespace in the set.
 func buildTopologyQuery(namespaces []string) string {
-	if len(namespaces) == 1 && namespaces[0] == AllNamespaces {
+	if IsAllNamespaces(namespaces) {
 		return fmt.Sprintf(`rate(%s{direction!="response"}[%s])`, metricName, window)
 	}
 	pattern := namespaceRegexPattern(namespaces)
