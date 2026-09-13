@@ -9,6 +9,7 @@ import { NamespaceBand } from './components/NamespaceBand'
 import { NamespaceMultiSelect } from './components/NamespaceMultiSelect'
 
 const DEFAULT_NAMESPACE = 'default'
+const DEFAULT_REFRESH_INTERVAL_MS = 15000
 const nodeTypes = { workload: WorkloadNode, namespaceBand: NamespaceBand }
 
 type LoadState =
@@ -29,6 +30,12 @@ function App() {
   const [allNamespacesValue, setAllNamespacesValue] = useState<string | null>(null)
   const [maxNamespaces, setMaxNamespaces] = useState(1)
   const [state, setState] = useState<LoadState>({ status: 'loading' })
+  // Configurable via ?refreshInterval=<ms>, same convention as ?namespace=.
+  const [refreshIntervalMs] = useState(() => {
+    const raw = Number(new URLSearchParams(window.location.search).get('refreshInterval'))
+    return raw > 0 ? raw : DEFAULT_REFRESH_INTERVAL_MS
+  })
+  const [paused, setPaused] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -75,6 +82,33 @@ function App() {
     }
   }, [namespaceParam])
 
+  // Polls /api/topology on refreshIntervalMs while not paused, updating the
+  // rendered graph in place without disturbing the current LoadState —
+  // separate from the effect above so toggling `paused` never re-triggers
+  // the initial loading transition and the last-rendered graph stays put.
+  useEffect(() => {
+    if (paused) return
+
+    let cancelled = false
+    const id = setInterval(() => {
+      // A failed background refresh doesn't replace the last-rendered graph
+      // with an error screen — it just logs and tries again next tick.
+      fetchTopology(namespaceParam)
+        .then(async (graph) => {
+          const { nodes, edges } = await layoutGraph(graph)
+          if (!cancelled) setState({ status: 'ready', nodes, edges, graph })
+        })
+        .catch((err: unknown) => {
+          console.error('background topology refresh failed', err)
+        })
+    }, refreshIntervalMs)
+
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [namespaceParam, refreshIntervalMs, paused])
+
   const summary = useMemo(() => {
     if (state.status !== 'ready') return null
     return `${state.graph.nodes.length} workloads · ${state.graph.edges.length} flows`
@@ -91,6 +125,14 @@ function App() {
           selected={selectedNamespaces}
           onChange={setSelectedNamespaces}
         />
+        <button
+          type="button"
+          className="app__refresh-toggle"
+          onClick={() => setPaused((p) => !p)}
+          aria-pressed={paused}
+        >
+          {paused ? '▶ Resume' : '⏸ Pause'}
+        </button>
         {summary && <span className="app__summary">{summary}</span>}
       </header>
       <main className="app__canvas">
