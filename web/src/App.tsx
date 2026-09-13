@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Background, ReactFlow, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './App.css'
@@ -16,6 +16,12 @@ type LoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
+
+async function loadTopology(namespace: string) {
+  const graph = await fetchTopology(namespace)
+  const { nodes, edges } = await layoutGraph(graph)
+  return { nodes, edges, graph }
+}
 
 function App() {
   const [selectedNamespaces, setSelectedNamespaces] = useState(() => {
@@ -63,10 +69,9 @@ function App() {
     let cancelled = false
     setState({ status: 'loading' })
 
-    fetchTopology(namespaceParam)
-      .then(async (graph) => {
-        const { nodes, edges } = await layoutGraph(graph)
-        if (!cancelled) setState({ status: 'ready', nodes, edges, graph })
+    loadTopology(namespaceParam)
+      .then((result) => {
+        if (!cancelled) setState({ status: 'ready', ...result })
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -82,6 +87,22 @@ function App() {
     }
   }, [namespaceParam])
 
+  // A failed background refresh doesn't replace the last-rendered graph with
+  // an error screen — it just logs and leaves the graph as-is (issue #8
+  // owns proper error/empty-state UX).
+  const refreshInBackground = useCallback(
+    (cancelledRef: { current: boolean }) => {
+      loadTopology(namespaceParam)
+        .then((result) => {
+          if (!cancelledRef.current) setState({ status: 'ready', ...result })
+        })
+        .catch((err: unknown) => {
+          console.error('background topology refresh failed', err)
+        })
+    },
+    [namespaceParam],
+  )
+
   // Polls /api/topology on refreshIntervalMs while not paused, updating the
   // rendered graph in place without disturbing the current LoadState —
   // separate from the effect above so toggling `paused` never re-triggers
@@ -89,30 +110,28 @@ function App() {
   useEffect(() => {
     if (paused) return
 
-    let cancelled = false
-    const id = setInterval(() => {
-      // A failed background refresh doesn't replace the last-rendered graph
-      // with an error screen — it just logs and tries again next tick.
-      fetchTopology(namespaceParam)
-        .then(async (graph) => {
-          const { nodes, edges } = await layoutGraph(graph)
-          if (!cancelled) setState({ status: 'ready', nodes, edges, graph })
-        })
-        .catch((err: unknown) => {
-          console.error('background topology refresh failed', err)
-        })
-    }, refreshIntervalMs)
+    const cancelledRef = { current: false }
+    const id = setInterval(() => refreshInBackground(cancelledRef), refreshIntervalMs)
 
     return () => {
-      cancelled = true
+      cancelledRef.current = true
       clearInterval(id)
     }
-  }, [namespaceParam, refreshIntervalMs, paused])
+  }, [refreshIntervalMs, paused, refreshInBackground])
 
   const summary = useMemo(() => {
     if (state.status !== 'ready') return null
     return `${state.graph.nodes.length} workloads · ${state.graph.edges.length} flows`
   }, [state])
+
+  function handleTogglePause() {
+    if (paused) {
+      // Resuming restarts the polling loop — refresh right away rather than
+      // leaving the user staring at a stale graph until the next tick.
+      refreshInBackground({ current: false })
+    }
+    setPaused((p) => !p)
+  }
 
   return (
     <div className="app">
@@ -128,7 +147,7 @@ function App() {
         <button
           type="button"
           className="app__refresh-toggle"
-          onClick={() => setPaused((p) => !p)}
+          onClick={handleTogglePause}
           aria-pressed={paused}
         >
           {paused ? '▶ Resume' : '⏸ Pause'}
