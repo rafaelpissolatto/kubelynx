@@ -18,6 +18,15 @@ import { NamespaceMultiSelect } from './components/NamespaceMultiSelect'
 import { ProtocolFilter } from './components/ProtocolFilter'
 import { FlowsTable } from './components/FlowsTable'
 import { FlowDetailPanel } from './components/FlowDetailPanel'
+import {
+  clampFlowsPanelWidth,
+  loadFlowsPanelWidth,
+  saveFlowsPanelWidth,
+  MIN_FLOWS_PANEL_WIDTH,
+  MAX_FLOWS_PANEL_WIDTH,
+} from './lib/resizablePanel'
+
+const FLOWS_PANEL_RESIZE_STEP = 20
 
 const SELECTED_FLOW_STROKE = '#f2c078'
 const UNSELECTED_FLOW_OPACITY = 0.35
@@ -92,6 +101,9 @@ function App() {
     return raw > 0 ? raw : DEFAULT_REFRESH_INTERVAL_MS
   })
   const [paused, setPaused] = useState(false)
+  const [flowsPanelWidth, setFlowsPanelWidth] = useState(() =>
+    loadFlowsPanelWidth(window.innerWidth),
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -218,6 +230,48 @@ function App() {
   // "misconfigured" warning.
   const noTrafficEverObserved = namespacesLoaded && namespaces.length === 0
 
+  // Drags widen the panel toward the left (the handle sits on its left
+  // edge), so a decreasing clientX as the pointer moves left translates to
+  // an increasing width — the reverse of a handle on the right edge. Only
+  // mouseup persists to localStorage — writing on every mousemove would
+  // otherwise hit storage dozens of times per drag for no benefit, since
+  // only the final width matters for restoring it later.
+  function handleResizeStart(startEvent: React.MouseEvent) {
+    startEvent.preventDefault()
+    const startX = startEvent.clientX
+    const startWidth = flowsPanelWidth
+    let latestWidth = startWidth
+
+    function onMouseMove(moveEvent: MouseEvent) {
+      latestWidth = clampFlowsPanelWidth(startWidth + (startX - moveEvent.clientX), window.innerWidth)
+      setFlowsPanelWidth(latestWidth)
+    }
+
+    function onMouseUp() {
+      saveFlowsPanelWidth(latestWidth)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
+  // Mirrors the drag direction: ArrowLeft moves the handle left (widens the
+  // panel), ArrowRight moves it right (narrows it) — matching a role=
+  // "separator" control's expected keyboard operability.
+  function handleResizeKeyDown(event: React.KeyboardEvent) {
+    let delta = 0
+    if (event.key === 'ArrowLeft') delta = FLOWS_PANEL_RESIZE_STEP
+    else if (event.key === 'ArrowRight') delta = -FLOWS_PANEL_RESIZE_STEP
+    else return
+
+    event.preventDefault()
+    const width = clampFlowsPanelWidth(flowsPanelWidth + delta, window.innerWidth)
+    setFlowsPanelWidth(width)
+    saveFlowsPanelWidth(width)
+  }
+
   function handleTogglePause() {
     if (paused) {
       // Resuming restarts the polling loop — refresh right away rather than
@@ -290,7 +344,19 @@ function App() {
             </ReactFlow>
           )}
         </main>
-        <aside className="app__flows-panel">
+        <div
+          className="app__flows-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize flows panel"
+          aria-valuenow={flowsPanelWidth}
+          aria-valuemin={MIN_FLOWS_PANEL_WIDTH}
+          aria-valuemax={MAX_FLOWS_PANEL_WIDTH}
+          tabIndex={0}
+          onMouseDown={handleResizeStart}
+          onKeyDown={handleResizeKeyDown}
+        />
+        <aside className="app__flows-panel" style={{ width: flowsPanelWidth }}>
           <FlowsTable
             flows={state.status === 'ready' ? state.graph.edges : []}
             selectedId={selectedFlowId}

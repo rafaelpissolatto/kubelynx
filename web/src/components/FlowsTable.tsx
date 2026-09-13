@@ -20,6 +20,11 @@ export function FlowsTable({ flows, selectedId, onSelect }: FlowsTableProps) {
 
   return (
     <table className="flows-table">
+      <colgroup>
+        <col />
+        <col className="flows-table__col--port" />
+        <col className="flows-table__col--bytes" />
+      </colgroup>
       <thead>
         <tr>
           <th className="flows-table__head-cell">Flow</th>

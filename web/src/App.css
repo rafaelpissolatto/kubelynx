@@ -157,10 +157,24 @@ body,
   min-width: 0;
 }
 
+.app__flows-resize-handle {
+  flex: none;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.app__flows-resize-handle:hover,
+.app__flows-resize-handle:active,
+.app__flows-resize-handle:focus-visible {
+  background: #2a2a38;
+}
+
+/* Width is set inline from App.tsx's resizable-panel state, not fixed here —
+   see lib/resizablePanel.ts. */
 .app__flows-panel {
   display: flex;
   flex-direction: column;
-  width: 340px;
   flex: none;
   border-left: 1px solid #23232f;
   overflow-y: auto;
@@ -241,8 +255,17 @@ body,
 
 .flows-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 12px;
+}
+
+.flows-table__col--port {
+  width: 64px;
+}
+
+.flows-table__col--bytes {
+  width: 84px;
 }
 
 .flows-table__head-cell {
@@ -263,7 +286,6 @@ body,
 }
 
 .flows-table__flow-cell {
-  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
