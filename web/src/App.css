@@ -146,13 +146,15 @@ body,
 }
 
 .protocol-filter,
-.theme-toggle {
+.theme-toggle,
+.band-arrangement-toggle {
   display: flex;
   gap: 4px;
 }
 
 .protocol-filter__chip,
-.theme-toggle__chip {
+.theme-toggle__chip,
+.band-arrangement-toggle__chip {
   font-size: 12px;
   color: var(--text-muted);
   background: var(--surface);
@@ -163,12 +165,14 @@ body,
 }
 
 .protocol-filter__chip:hover,
-.theme-toggle__chip:hover {
+.theme-toggle__chip:hover,
+.band-arrangement-toggle__chip:hover {
   background: var(--surface-hover);
 }
 
 .protocol-filter__chip[aria-pressed='true'],
-.theme-toggle__chip[aria-pressed='true'] {
+.theme-toggle__chip[aria-pressed='true'],
+.band-arrangement-toggle__chip[aria-pressed='true'] {
   color: var(--text);
   background: var(--surface-selected);
   border-color: var(--border-selected);

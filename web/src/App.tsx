@@ -19,6 +19,7 @@ import { ProtocolFilter } from './components/ProtocolFilter'
 import { FlowsTable } from './components/FlowsTable'
 import { FlowDetailPanel } from './components/FlowDetailPanel'
 import { ThemeToggle } from './components/ThemeToggle'
+import { BandArrangementToggle } from './components/BandArrangementToggle'
 import {
   clampFlowsPanelWidth,
   loadFlowsPanelWidth,
@@ -27,6 +28,11 @@ import {
   MAX_FLOWS_PANEL_WIDTH,
 } from './lib/resizablePanel'
 import { loadTheme, saveTheme, resolveTheme, type Theme } from './lib/theme'
+import {
+  loadBandArrangement,
+  saveBandArrangement,
+  type BandArrangement,
+} from './lib/bandArrangement'
 
 const FLOWS_PANEL_RESIZE_STEP = 20
 
@@ -52,9 +58,13 @@ type LoadState =
   | { status: 'error'; kind: ErrorKind; message: string }
   | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
 
-async function loadTopology(namespace: string, protocol: ProtocolFilterValue) {
+async function loadTopology(
+  namespace: string,
+  protocol: ProtocolFilterValue,
+  bandArrangement: BandArrangement,
+) {
   const graph = await fetchTopology(namespace, protocol)
-  const { nodes, edges } = await layoutGraph(graph)
+  const { nodes, edges } = await layoutGraph(graph, bandArrangement)
   return { nodes, edges, graph }
 }
 
@@ -123,6 +133,7 @@ function App() {
   // its light/dark values by hand, keeping App.css the single source of
   // truth for the accent color.
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT)
+  const [bandArrangement, setBandArrangement] = useState<BandArrangement>(loadBandArrangement)
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -140,6 +151,11 @@ function App() {
   function handleThemeChange(next: Theme) {
     setTheme(next)
     saveTheme(next)
+  }
+
+  function handleBandArrangementChange(next: BandArrangement) {
+    setBandArrangement(next)
+    saveBandArrangement(next)
   }
 
   useEffect(() => {
@@ -186,7 +202,7 @@ function App() {
     setState({ status: 'loading' })
     setSelectedFlowId(null)
 
-    loadTopology(namespaceParam, protocol)
+    loadTopology(namespaceParam, protocol, bandArrangement)
       .then((result) => {
         if (!cancelled) setState({ status: 'ready', ...result })
       })
@@ -199,15 +215,15 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [namespaceParam, protocol])
+  }, [namespaceParam, protocol, bandArrangement])
 
   // A failed background refresh doesn't replace the last-rendered graph with
   // an error screen — it just logs and leaves the graph as-is; the
   // unreachable/invalid/empty states above only ever come from the initial
-  // (or namespace/protocol-change-triggered) load.
+  // (or namespace/protocol/band-arrangement-change-triggered) load.
   const refreshInBackground = useCallback(
     (cancelledRef: { current: boolean }) => {
-      loadTopology(namespaceParam, protocol)
+      loadTopology(namespaceParam, protocol, bandArrangement)
         .then((result) => {
           if (!cancelledRef.current) setState({ status: 'ready', ...result })
         })
@@ -215,7 +231,7 @@ function App() {
           console.error('background topology refresh failed', err)
         })
     },
-    [namespaceParam, protocol],
+    [namespaceParam, protocol, bandArrangement],
   )
 
   // Polls /api/topology on refreshIntervalMs while not paused, updating the
@@ -330,6 +346,7 @@ function App() {
           onChange={setSelectedNamespaces}
         />
         <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
+        <BandArrangementToggle selected={bandArrangement} onChange={handleBandArrangementChange} />
         <button
           type="button"
           className="app__refresh-toggle"
