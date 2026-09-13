@@ -22,6 +22,15 @@ export interface Graph {
   edges: Flow[]
 }
 
+// flowId derives a stable identity for a Flow from the same dimensions
+// internal/topology's edgeKey dedupes edges on (source, target, protocol,
+// port) — not an array index — so a selection referencing it survives a
+// background refresh as long as the same logical flow is still present,
+// even if its position in Graph.edges shifts.
+export function flowId(flow: Flow): string {
+  return `${flow.source}->${flow.target}|${flow.protocol ?? ''}|${flow.port ?? ''}`
+}
+
 // ProtocolFilter is one of the values /api/protocols returns and
 // /api/topology?protocol= accepts. The frontend never hardcodes the set
 // itself — see fetchProtocols — matching the same pattern NamespacesResponse
