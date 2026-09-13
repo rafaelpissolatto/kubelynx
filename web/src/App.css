@@ -253,6 +253,29 @@ body,
   pointer-events: none;
 }
 
+.flows-table__filter {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #e6e6ef;
+  background: #14141c;
+  border: none;
+  border-bottom: 1px solid #23232f;
+}
+
+.flows-table__filter:focus {
+  outline: 1px solid #3a3a4c;
+  outline-offset: -1px;
+}
+
+.flows-table__filter::placeholder {
+  color: #6a6a7c;
+}
+
 .flows-table {
   width: 100%;
   table-layout: fixed;
