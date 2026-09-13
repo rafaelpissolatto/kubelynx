@@ -7,6 +7,7 @@ import {
   fetchProtocols,
   fetchTopology,
   flowId,
+  TopologyError,
   type Graph,
   type ProtocolFilter as ProtocolFilterValue,
 } from './lib/topology'
@@ -26,9 +27,16 @@ const DEFAULT_PROTOCOL: ProtocolFilterValue = 'all'
 const DEFAULT_REFRESH_INTERVAL_MS = 15000
 const nodeTypes = { workload: WorkloadNode, namespaceBand: NamespaceBand }
 
+// 'unreachable' (a 502 from TopologyHandler: BuildTopology couldn't complete
+// its Prometheus query) and 'invalid' (a 400: the request itself was
+// rejected, e.g. too many namespaces) get visually and textually distinct
+// treatment — conflating either with a plain empty graph, or with each
+// other, hides genuinely different problems behind one generic message.
+type ErrorKind = 'unreachable' | 'invalid' | 'unknown'
+
 type LoadState =
   | { status: 'loading' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; kind: ErrorKind; message: string }
   | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
 
 async function loadTopology(namespace: string, protocol: ProtocolFilterValue) {
@@ -37,12 +45,26 @@ async function loadTopology(namespace: string, protocol: ProtocolFilterValue) {
   return { nodes, edges, graph }
 }
 
+function classifyTopologyError(err: unknown): { kind: ErrorKind; message: string } {
+  if (err instanceof TopologyError) {
+    if (err.status === 502) return { kind: 'unreachable', message: err.message }
+    if (err.status === 400) return { kind: 'invalid', message: err.message }
+  }
+  return { kind: 'unknown', message: err instanceof Error ? err.message : 'Failed to load topology' }
+}
+
 function App() {
   const [selectedNamespaces, setSelectedNamespaces] = useState(() => {
     const raw = new URLSearchParams(window.location.search).get('namespace')
     return raw ? raw.split(',') : [DEFAULT_NAMESPACE]
   })
   const [namespaces, setNamespaces] = useState<string[]>([])
+  // Distinguishes "haven't heard back from /api/namespaces yet" from "heard
+  // back, and it's empty" — the latter, combined with a zero-node topology
+  // result, is the signal that no beyla_network_flow_bytes_total series has
+  // ever been observed (see the empty-state rendering below), not merely
+  // that the current namespace/protocol selection has no traffic right now.
+  const [namespacesLoaded, setNamespacesLoaded] = useState(false)
   // The "all namespaces" sentinel value /api/topology?namespace= accepts,
   // and the cap on simultaneously selected namespaces it enforces — both
   // sourced from /api/namespaces rather than hardcoded, so the frontend
@@ -73,6 +95,7 @@ function App() {
           setNamespaces(res.namespaces)
           setAllNamespacesValue(res.all)
           setMaxNamespaces(res.max)
+          setNamespacesLoaded(true)
         }
       })
       .catch((err: unknown) => {
@@ -113,10 +136,7 @@ function App() {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setState({
-            status: 'error',
-            message: err instanceof Error ? err.message : 'Failed to load topology',
-          })
+          setState({ status: 'error', ...classifyTopologyError(err) })
         }
       })
 
@@ -126,8 +146,9 @@ function App() {
   }, [namespaceParam, protocol])
 
   // A failed background refresh doesn't replace the last-rendered graph with
-  // an error screen — it just logs and leaves the graph as-is (issue #8
-  // owns proper error/empty-state UX).
+  // an error screen — it just logs and leaves the graph as-is; the
+  // unreachable/invalid/empty states above only ever come from the initial
+  // (or namespace/protocol-change-triggered) load.
   const refreshInBackground = useCallback(
     (cancelledRef: { current: boolean }) => {
       loadTopology(namespaceParam, protocol)
@@ -218,14 +239,32 @@ function App() {
       <div className="app__body">
         <main className="app__canvas">
           {state.status === 'loading' && <div className="app__status">Loading topology…</div>}
-          {state.status === 'error' && (
-            <div className="app__status app__status--error">{state.message}</div>
-          )}
-          {state.status === 'ready' && state.nodes.length === 0 && (
-            <div className="app__status">
-              No workload traffic observed in "{selectedNamespaces.join(', ')}" yet.
+          {state.status === 'error' && state.kind === 'unreachable' && (
+            <div className="app__status app__status--error">
+              <strong>Prometheus unreachable.</strong> {state.message}
             </div>
           )}
+          {state.status === 'error' && state.kind !== 'unreachable' && (
+            <div className="app__status app__status--error">{state.message}</div>
+          )}
+          {state.status === 'ready' &&
+            state.nodes.length === 0 &&
+            namespacesLoaded &&
+            namespaces.length === 0 && (
+              <div className="app__status app__status--warning">
+                <strong>No traffic data found.</strong> Prometheus has no{' '}
+                <code>beyla_network_flow_bytes_total</code> series at all — check that Beyla's
+                network metrics feature is enabled and exporting the k8s_src/dst_namespace and
+                k8s_src/dst_owner_name attributes KubeLynx relies on.
+              </div>
+            )}
+          {state.status === 'ready' &&
+            state.nodes.length === 0 &&
+            (!namespacesLoaded || namespaces.length > 0) && (
+              <div className="app__status">
+                No workload traffic observed in "{selectedNamespaces.join(', ')}" yet.
+              </div>
+            )}
           {state.status === 'ready' && state.nodes.length > 0 && (
             <ReactFlow
               nodes={state.nodes}

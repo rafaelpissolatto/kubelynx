@@ -40,11 +40,27 @@ export function flowId(flow: Flow): string {
 // establishes for AllNamespaces/MaxNamespaces below.
 export type ProtocolFilter = string
 
+// TopologyError carries the HTTP status /api/topology responded with, so
+// callers can tell a Prometheus-side failure (502, from internal/api's
+// TopologyHandler) apart from a rejected request (400, e.g. too many
+// namespaces or an invalid protocol) rather than treating every failure the
+// same way.
+export class TopologyError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'TopologyError'
+    this.status = status
+  }
+}
+
 export async function fetchTopology(namespace: string, protocol: ProtocolFilter): Promise<Graph> {
   const params = new URLSearchParams({ namespace, protocol })
   const res = await fetch(`/api/topology?${params}`)
   if (!res.ok) {
-    throw new Error(`GET /api/topology failed: ${res.status} ${res.statusText}`)
+    const body = (await res.text().catch(() => '')).trim()
+    throw new TopologyError(res.status, body || `${res.status} ${res.statusText}`)
   }
   return res.json()
 }
