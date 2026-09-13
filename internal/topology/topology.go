@@ -18,6 +18,10 @@ const metricName = "beyla_network_flow_bytes_total"
 // window is the rolling rate() interval BuildTopology queries over.
 const window = "1m"
 
+// AllNamespaces is the BuildTopology namespace value that requests every
+// namespace observed, rather than filtering to one.
+const AllNamespaces = "all"
+
 // edgeKey identifies one logical edge: Beyla captures the same connection at
 // multiple points (once per node's DaemonSet pod, and separately pre/post
 // NAT for Service traffic), so several series can describe the same edge —
@@ -32,14 +36,7 @@ type edgeKey struct {
 // edges. A series missing non-identity attributes (protocol, port, ...)
 // still produces an edge, just without the missing label.
 func BuildTopology(ctx context.Context, api promv1.API, namespace string) (Graph, error) {
-	// direction!="response" drops the reverse-traffic half of each
-	// connection, which Beyla reports on a fresh ephemeral dst_port per
-	// connection — without this a single logical flow explodes into one
-	// series per connection instead of settling on the server's port.
-	query := fmt.Sprintf(
-		`rate(%s{k8s_src_namespace=%q,direction!="response"}[%s]) or rate(%s{k8s_dst_namespace=%q,direction!="response"}[%s])`,
-		metricName, namespace, window, metricName, namespace, window,
-	)
+	query := buildTopologyQuery(namespace)
 
 	result, warnings, err := api.Query(ctx, query, time.Now())
 	if err != nil {
@@ -123,6 +120,22 @@ func BuildTopology(ctx context.Context, api promv1.API, namespace string) (Graph
 	})
 
 	return Graph{Nodes: nodeList, Edges: edges}, nil
+}
+
+// buildTopologyQuery renders the PromQL query for BuildTopology.
+// direction!="response" drops the reverse-traffic half of each connection,
+// which Beyla reports on a fresh ephemeral dst_port per connection — without
+// this a single logical flow explodes into one series per connection
+// instead of settling on the server's port. namespace == AllNamespaces omits
+// the namespace filter entirely, matching every namespace observed.
+func buildTopologyQuery(namespace string) string {
+	if namespace == AllNamespaces {
+		return fmt.Sprintf(`rate(%s{direction!="response"}[%s])`, metricName, window)
+	}
+	return fmt.Sprintf(
+		`rate(%s{k8s_src_namespace=%q,direction!="response"}[%s]) or rate(%s{k8s_dst_namespace=%q,direction!="response"}[%s])`,
+		metricName, namespace, window, metricName, namespace, window,
+	)
 }
 
 // workloadID identifies a Workload by namespace + owner name, matching what
