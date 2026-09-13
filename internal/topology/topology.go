@@ -47,15 +47,18 @@ type edgeKey struct {
 // (rate over a rolling 1m window) touching any of namespaces — as either
 // source or destination — and assembles them into a Graph of Workload nodes
 // and Flow edges. A series missing non-identity attributes (protocol, port,
-// ...) still produces an edge, just without the missing label. Callers
-// enforce MaxNamespaces themselves (see internal/api); BuildTopology does
-// not reject an oversized namespaces slice on its own.
-func BuildTopology(ctx context.Context, api promv1.API, namespaces []string) (Graph, error) {
-	query := buildTopologyQuery(namespaces)
+// ...) still produces an edge, just without the missing label. protocol
+// scopes the query to one of ValidProtocols (classes governs how ProtocolHTTP
+// and ProtocolGRPC are recognized; see ProtocolClasses) — ProtocolAll applies
+// no protocol scoping. Callers enforce MaxNamespaces and IsValidProtocol
+// themselves (see internal/api); BuildTopology does not reject an oversized
+// namespaces slice or invalid protocol on its own.
+func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, protocol string, classes ProtocolClasses) (Graph, error) {
+	query := buildTopologyQuery(namespaces, protocol, classes)
 
 	result, warnings, err := api.Query(ctx, query, time.Now())
 	if err != nil {
-		return Graph{}, fmt.Errorf("querying prometheus for namespaces %v: %w", namespaces, err)
+		return Graph{}, fmt.Errorf("querying prometheus for namespaces %v, protocol %q: %w", namespaces, protocol, err)
 	}
 	if len(warnings) > 0 {
 		slog.WarnContext(ctx, "prometheus query returned warnings", "namespaces", namespaces, "warnings", warnings)
@@ -63,7 +66,7 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string) (Gr
 
 	vector, ok := result.(model.Vector)
 	if !ok {
-		return Graph{}, fmt.Errorf("unexpected prometheus result type %T for namespaces %v", result, namespaces)
+		return Graph{}, fmt.Errorf("unexpected prometheus result type %T for namespaces %v, protocol %q", result, namespaces, protocol)
 	}
 
 	nodes := map[string]Workload{}
@@ -144,15 +147,61 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string) (Gr
 // instead of settling on the server's port. namespaces == [AllNamespaces]
 // omits the namespace filter entirely, matching every namespace observed;
 // otherwise the query matches a series touching any namespace in the set.
-func buildTopologyQuery(namespaces []string) string {
+// protocol adds the ProtocolClasses-derived scoping from protocolMatcher, or
+// nothing for ProtocolAll.
+func buildTopologyQuery(namespaces []string, protocol string, classes ProtocolClasses) string {
+	protoMatcher := commaSuffixed(protocolMatcher(protocol, classes))
+
 	if IsAllNamespaces(namespaces) {
-		return fmt.Sprintf(`rate(%s{direction!="response"}[%s])`, metricName, window)
+		return fmt.Sprintf(`rate(%s{%sdirection!="response"}[%s])`, metricName, protoMatcher, window)
 	}
 	pattern := namespaceRegexPattern(namespaces)
 	return fmt.Sprintf(
-		`rate(%s{k8s_src_namespace=~%q,direction!="response"}[%s]) or rate(%s{k8s_dst_namespace=~%q,direction!="response"}[%s])`,
-		metricName, pattern, window, metricName, pattern, window,
+		`rate(%s{k8s_src_namespace=~%q,%sdirection!="response"}[%s]) or rate(%s{k8s_dst_namespace=~%q,%sdirection!="response"}[%s])`,
+		metricName, pattern, protoMatcher, window, metricName, pattern, protoMatcher, window,
 	)
+}
+
+// protocolMatcher renders the PromQL matcher fragment (without enclosing
+// braces or a trailing comma) that scopes a query to protocol, or "" for
+// ProtocolAll — no application-protocol label exists on
+// beyla_network_flow_bytes_total, so ProtocolHTTP and ProtocolGRPC are
+// approximated via classes' dst_port lists, and ProtocolTCP is transport
+// "TCP" traffic on neither list.
+func protocolMatcher(protocol string, classes ProtocolClasses) string {
+	switch protocol {
+	case ProtocolHTTP:
+		return fmt.Sprintf(`dst_port=~%q`, portPattern(classes.HTTPPorts))
+	case ProtocolGRPC:
+		return fmt.Sprintf(`dst_port=~%q`, portPattern(classes.GRPCPorts))
+	case ProtocolTCP:
+		excluded := portPattern(append(append([]string{}, classes.HTTPPorts...), classes.GRPCPorts...))
+		if excluded == "" {
+			return `transport="TCP"`
+		}
+		return fmt.Sprintf(`transport="TCP",dst_port!~%q`, excluded)
+	default:
+		return ""
+	}
+}
+
+// portPattern renders ports as a PromQL regex-matcher alternation, escaping
+// each value the same way namespaceRegexPattern does for namespaces.
+func portPattern(ports []string) string {
+	escaped := make([]string, len(ports))
+	for i, p := range ports {
+		escaped[i] = regexp.QuoteMeta(p)
+	}
+	return strings.Join(escaped, "|")
+}
+
+// commaSuffixed appends a trailing comma to matcher so it can be spliced in
+// front of another matcher inside a PromQL selector, or returns "" unchanged.
+func commaSuffixed(matcher string) string {
+	if matcher == "" {
+		return ""
+	}
+	return matcher + ","
 }
 
 // namespaceRegexPattern renders namespaces as a PromQL regex-matcher

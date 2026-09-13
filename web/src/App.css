@@ -96,6 +96,31 @@ body,
   color: #9494a8;
 }
 
+.protocol-filter {
+  display: flex;
+  gap: 4px;
+}
+
+.protocol-filter__chip {
+  font-size: 12px;
+  color: #9494a8;
+  background: #1a1a24;
+  border: 1px solid #2a2a38;
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.protocol-filter__chip:hover {
+  background: #22222e;
+}
+
+.protocol-filter__chip[aria-pressed='true'] {
+  color: #e6e6ef;
+  background: #262636;
+  border-color: #3a3a4c;
+}
+
 .app__refresh-toggle {
   font-size: 13px;
   color: #e6e6ef;

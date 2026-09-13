@@ -2,13 +2,21 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Background, ReactFlow, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './App.css'
-import { fetchNamespaces, fetchTopology, type Graph } from './lib/topology'
+import {
+  fetchNamespaces,
+  fetchProtocols,
+  fetchTopology,
+  type Graph,
+  type ProtocolFilter as ProtocolFilterValue,
+} from './lib/topology'
 import { layoutGraph } from './lib/layout'
 import { WorkloadNode } from './components/WorkloadNode'
 import { NamespaceBand } from './components/NamespaceBand'
 import { NamespaceMultiSelect } from './components/NamespaceMultiSelect'
+import { ProtocolFilter } from './components/ProtocolFilter'
 
 const DEFAULT_NAMESPACE = 'default'
+const DEFAULT_PROTOCOL: ProtocolFilterValue = 'all'
 const DEFAULT_REFRESH_INTERVAL_MS = 15000
 const nodeTypes = { workload: WorkloadNode, namespaceBand: NamespaceBand }
 
@@ -17,8 +25,8 @@ type LoadState =
   | { status: 'error'; message: string }
   | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
 
-async function loadTopology(namespace: string) {
-  const graph = await fetchTopology(namespace)
+async function loadTopology(namespace: string, protocol: ProtocolFilterValue) {
+  const graph = await fetchTopology(namespace, protocol)
   const { nodes, edges } = await layoutGraph(graph)
   return { nodes, edges, graph }
 }
@@ -35,6 +43,10 @@ function App() {
   // never has to agree on these values with the backend independently.
   const [allNamespacesValue, setAllNamespacesValue] = useState<string | null>(null)
   const [maxNamespaces, setMaxNamespaces] = useState(1)
+  const [protocols, setProtocols] = useState<ProtocolFilterValue[]>([DEFAULT_PROTOCOL])
+  const [protocol, setProtocol] = useState<ProtocolFilterValue>(() => {
+    return new URLSearchParams(window.location.search).get('protocol') || DEFAULT_PROTOCOL
+  })
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   // Configurable via ?refreshInterval=<ms>, same convention as ?namespace=.
   const [refreshIntervalMs] = useState(() => {
@@ -63,13 +75,29 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+
+    fetchProtocols()
+      .then((res) => {
+        if (!cancelled) setProtocols(res.protocols)
+      })
+      .catch((err: unknown) => {
+        console.error('failed to load protocols', err)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const namespaceParam = selectedNamespaces.join(',')
 
   useEffect(() => {
     let cancelled = false
     setState({ status: 'loading' })
 
-    loadTopology(namespaceParam)
+    loadTopology(namespaceParam, protocol)
       .then((result) => {
         if (!cancelled) setState({ status: 'ready', ...result })
       })
@@ -85,14 +113,14 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [namespaceParam])
+  }, [namespaceParam, protocol])
 
   // A failed background refresh doesn't replace the last-rendered graph with
   // an error screen — it just logs and leaves the graph as-is (issue #8
   // owns proper error/empty-state UX).
   const refreshInBackground = useCallback(
     (cancelledRef: { current: boolean }) => {
-      loadTopology(namespaceParam)
+      loadTopology(namespaceParam, protocol)
         .then((result) => {
           if (!cancelledRef.current) setState({ status: 'ready', ...result })
         })
@@ -100,7 +128,7 @@ function App() {
           console.error('background topology refresh failed', err)
         })
     },
-    [namespaceParam],
+    [namespaceParam, protocol],
   )
 
   // Polls /api/topology on refreshIntervalMs while not paused, updating the
@@ -144,6 +172,7 @@ function App() {
           selected={selectedNamespaces}
           onChange={setSelectedNamespaces}
         />
+        <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
         <button
           type="button"
           className="app__refresh-toggle"
