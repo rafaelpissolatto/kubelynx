@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { Background, ReactFlow, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './App.css'
-import { fetchTopology, type Graph } from './lib/topology'
+import { fetchNamespaces, fetchTopology, type Graph } from './lib/topology'
 import { layoutGraph } from './lib/layout'
 import { WorkloadNode } from './components/WorkloadNode'
+import { NamespaceBand } from './components/NamespaceBand'
 
 const DEFAULT_NAMESPACE = 'default'
-const nodeTypes = { workload: WorkloadNode }
+export const ALL_NAMESPACES = 'all'
+const nodeTypes = { workload: WorkloadNode, namespaceBand: NamespaceBand }
 
 type LoadState =
   | { status: 'loading' }
@@ -15,13 +17,31 @@ type LoadState =
   | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
 
 function App() {
-  const [namespace] = useState(
+  const [namespace, setNamespace] = useState(
     () => new URLSearchParams(window.location.search).get('namespace') ?? DEFAULT_NAMESPACE,
   )
+  const [namespaces, setNamespaces] = useState<string[]>([])
   const [state, setState] = useState<LoadState>({ status: 'loading' })
 
   useEffect(() => {
     let cancelled = false
+
+    fetchNamespaces()
+      .then((ns) => {
+        if (!cancelled) setNamespaces(ns)
+      })
+      .catch((err: unknown) => {
+        console.error('failed to load namespaces', err)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    setState({ status: 'loading' })
 
     fetchTopology(namespace)
       .then(async (graph) => {
@@ -51,7 +71,19 @@ function App() {
     <div className="app">
       <header className="app__header">
         <span className="app__brand">KubeLynx</span>
-        <span className="app__namespace">ns {namespace}</span>
+        <select
+          className="app__namespace-picker"
+          value={namespace}
+          onChange={(e) => setNamespace(e.target.value)}
+          aria-label="Namespace"
+        >
+          <option value={ALL_NAMESPACES}>All namespaces</option>
+          {namespaces.map((ns) => (
+            <option key={ns} value={ns}>
+              {ns}
+            </option>
+          ))}
+        </select>
         {summary && <span className="app__summary">{summary}</span>}
       </header>
       <main className="app__canvas">

@@ -187,6 +187,44 @@ func TestBuildTopology_PrometheusUnreachable(t *testing.T) {
 	}
 }
 
+func TestBuildTopology_AllNamespaces_OmitsNamespaceFilter(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parsing form: %v", err)
+		}
+		gotQuery = r.FormValue("query")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, emptyResult)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := promapi.NewClient(promapi.Config{Address: srv.URL})
+	if err != nil {
+		t.Fatalf("creating prometheus client: %v", err)
+	}
+	api := promv1.NewAPI(client)
+
+	if _, err := topology.BuildTopology(context.Background(), api, topology.AllNamespaces); err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+
+	if strings.Contains(gotQuery, "k8s_src_namespace=") || strings.Contains(gotQuery, "k8s_dst_namespace=") {
+		t.Errorf("query %q filters by namespace, want unfiltered for %q", gotQuery, topology.AllNamespaces)
+	}
+}
+
+func TestBuildTopology_AllNamespaces_ReturnsWorkloadsAcrossNamespaces(t *testing.T) {
+	api := newFakeAPI(t, fullAttributeResult, http.StatusOK)
+
+	graph, err := topology.BuildTopology(context.Background(), api, topology.AllNamespaces)
+	if err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+	if len(graph.Nodes) != 2 {
+		t.Fatalf("want 2 nodes, got %d: %+v", len(graph.Nodes), graph.Nodes)
+	}
+}
+
 func TestBuildTopology_ExcludesResponseDirection(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

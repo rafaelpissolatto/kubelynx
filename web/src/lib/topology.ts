@@ -29,3 +29,11 @@ export async function fetchTopology(namespace: string): Promise<Graph> {
   }
   return res.json()
 }
+
+export async function fetchNamespaces(): Promise<string[]> {
+  const res = await fetch('/api/namespaces')
+  if (!res.ok) {
+    throw new Error(`GET /api/namespaces failed: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}

@@ -30,6 +30,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/topology", api.TopologyHandler(prom))
+	mux.HandleFunc("/api/namespaces", api.NamespacesHandler(prom))
 
 	slog.Info("kubelynx listening", "addr", *listenAddr, "prometheus", *promURL)
 	if err := http.ListenAndServe(*listenAddr, mux); err != nil {
