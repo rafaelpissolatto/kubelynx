@@ -22,9 +22,9 @@ export function FlowsTable({ flows, selectedId, onSelect }: FlowsTableProps) {
     <table className="flows-table">
       <thead>
         <tr>
-          <th>Flow</th>
-          <th>Port</th>
-          <th>Bytes/s</th>
+          <th className="flows-table__head-cell">Flow</th>
+          <th className="flows-table__head-cell">Port</th>
+          <th className="flows-table__head-cell">Bytes/s</th>
         </tr>
       </thead>
       <tbody>
@@ -38,11 +38,14 @@ export function FlowsTable({ flows, selectedId, onSelect }: FlowsTableProps) {
               aria-selected={selected}
               onClick={() => onSelect(id)}
             >
-              <td className="flows-table__flow-cell" title={`${flow.source} → ${flow.target}`}>
+              <td
+                className="flows-table__cell flows-table__flow-cell"
+                title={`${flow.source} → ${flow.target}`}
+              >
                 {flow.source} → {flow.target}
               </td>
-              <td>{flow.port || '—'}</td>
-              <td>{formatBytesPerSecond(flow.bytesPerSecond)}</td>
+              <td className="flows-table__cell">{flow.port || '—'}</td>
+              <td className="flows-table__cell">{formatBytesPerSecond(flow.bytesPerSecond)}</td>
             </tr>
           )
         })}

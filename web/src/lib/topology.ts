@@ -26,7 +26,10 @@ export interface Graph {
 // internal/topology's edgeKey dedupes edges on (source, target, protocol,
 // port) — not an array index — so a selection referencing it survives a
 // background refresh as long as the same logical flow is still present,
-// even if its position in Graph.edges shifts.
+// even if its position in Graph.edges shifts. The delimiters aren't escaped:
+// safe today because source/target are workload IDs ("namespace/name", both
+// valid Kubernetes names) that can't contain "->" or "|", but revisit this
+// if either field ever becomes a less-constrained string.
 export function flowId(flow: Flow): string {
   return `${flow.source}->${flow.target}|${flow.protocol ?? ''}|${flow.port ?? ''}`
 }

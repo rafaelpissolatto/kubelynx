@@ -222,7 +222,7 @@ body,
   font-size: 12px;
 }
 
-.flows-table th {
+.flows-table__head-cell {
   position: sticky;
   top: 0;
   text-align: left;
@@ -233,7 +233,7 @@ body,
   border-bottom: 1px solid #23232f;
 }
 
-.flows-table td {
+.flows-table__cell {
   padding: 6px 12px;
   border-bottom: 1px solid #1c1c26;
   white-space: nowrap;
