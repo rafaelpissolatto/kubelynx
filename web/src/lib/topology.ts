@@ -22,18 +22,31 @@ export interface Graph {
   edges: Flow[]
 }
 
-// ProtocolFilter mirrors the values internal/topology.ValidProtocols accepts
-// for /api/topology?protocol=. Unlike the namespace list, this vocabulary is
-// fixed (not cluster-specific), so it's safe to hardcode on the frontend.
-export type ProtocolFilter = 'all' | 'http' | 'grpc' | 'tcp'
-
-export const PROTOCOL_FILTERS: ProtocolFilter[] = ['all', 'http', 'grpc', 'tcp']
+// ProtocolFilter is one of the values /api/protocols returns and
+// /api/topology?protocol= accepts. The frontend never hardcodes the set
+// itself — see fetchProtocols — matching the same pattern NamespacesResponse
+// establishes for AllNamespaces/MaxNamespaces below.
+export type ProtocolFilter = string
 
 export async function fetchTopology(namespace: string, protocol: ProtocolFilter): Promise<Graph> {
   const params = new URLSearchParams({ namespace, protocol })
   const res = await fetch(`/api/topology?${params}`)
   if (!res.ok) {
     throw new Error(`GET /api/topology failed: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}
+
+// ProtocolsResponse mirrors the JSON shape served by /api/protocols
+// (internal/api.protocolsResponse in the Go backend).
+export interface ProtocolsResponse {
+  protocols: ProtocolFilter[]
+}
+
+export async function fetchProtocols(): Promise<ProtocolsResponse> {
+  const res = await fetch('/api/protocols')
+  if (!res.ok) {
+    throw new Error(`GET /api/protocols failed: ${res.status} ${res.statusText}`)
   }
   return res.json()
 }

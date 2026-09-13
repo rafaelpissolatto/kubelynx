@@ -4,8 +4,8 @@ import '@xyflow/react/dist/style.css'
 import './App.css'
 import {
   fetchNamespaces,
+  fetchProtocols,
   fetchTopology,
-  PROTOCOL_FILTERS,
   type Graph,
   type ProtocolFilter as ProtocolFilterValue,
 } from './lib/topology'
@@ -43,9 +43,9 @@ function App() {
   // never has to agree on these values with the backend independently.
   const [allNamespacesValue, setAllNamespacesValue] = useState<string | null>(null)
   const [maxNamespaces, setMaxNamespaces] = useState(1)
+  const [protocols, setProtocols] = useState<ProtocolFilterValue[]>([DEFAULT_PROTOCOL])
   const [protocol, setProtocol] = useState<ProtocolFilterValue>(() => {
-    const raw = new URLSearchParams(window.location.search).get('protocol')
-    return PROTOCOL_FILTERS.includes(raw as ProtocolFilterValue) ? (raw as ProtocolFilterValue) : DEFAULT_PROTOCOL
+    return new URLSearchParams(window.location.search).get('protocol') || DEFAULT_PROTOCOL
   })
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   // Configurable via ?refreshInterval=<ms>, same convention as ?namespace=.
@@ -68,6 +68,22 @@ function App() {
       })
       .catch((err: unknown) => {
         console.error('failed to load namespaces', err)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetchProtocols()
+      .then((res) => {
+        if (!cancelled) setProtocols(res.protocols)
+      })
+      .catch((err: unknown) => {
+        console.error('failed to load protocols', err)
       })
 
     return () => {
@@ -156,7 +172,7 @@ function App() {
           selected={selectedNamespaces}
           onChange={setSelectedNamespaces}
         />
-        <ProtocolFilter selected={protocol} onChange={setProtocol} />
+        <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
         <button
           type="button"
           className="app__refresh-toggle"

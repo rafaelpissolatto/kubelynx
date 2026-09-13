@@ -19,7 +19,7 @@ func main() {
 	var (
 		listenAddr        = flag.String("listen-addr", ":8080", "address to serve the KubeLynx API on")
 		promURL           = flag.String("prometheus-url", "http://localhost:9090", "base URL of the Prometheus server to query")
-		protocolPortsFile = flag.String("protocol-ports-file", "", "path to a JSON file overriding the default HTTP/gRPC dst_port classification used by the protocol filter (see topology.ProtocolClasses); omit to use the built-in defaults")
+		protocolPortsFile = flag.String("protocol-ports-file", "", `path to a JSON file overriding the default HTTP/gRPC port classification used by the protocol filter, e.g. {"http":["8081"],"grpc":["50052"]}; omit to use the built-in defaults`)
 	)
 	flag.Parse()
 
@@ -39,6 +39,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/topology", api.TopologyHandler(prom, protocolClasses))
 	mux.HandleFunc("/api/namespaces", api.NamespacesHandler(prom))
+	mux.HandleFunc("/api/protocols", api.ProtocolsHandler())
 
 	slog.Info("kubelynx listening", "addr", *listenAddr, "prometheus", *promURL)
 	if err := http.ListenAndServe(*listenAddr, mux); err != nil {
