@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	promapi "github.com/prometheus/client_golang/api"
@@ -80,6 +81,49 @@ func TestTopologyHandler_DefaultsNamespace(t *testing.T) {
 	prom := fakePromAPI(t, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/topology", nil)
+	rec := httptest.NewRecorder()
+
+	api.TopologyHandler(prom)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTopologyHandler_MultipleNamespaces(t *testing.T) {
+	prom := fakePromAPI(t, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=demo-frontend,demo-backend", nil)
+	rec := httptest.NewRecorder()
+
+	api.TopologyHandler(prom)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTopologyHandler_TooManyNamespaces_Returns400(t *testing.T) {
+	prom := fakePromAPI(t, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+
+	namespaces := make([]string, topology.MaxNamespaces+1)
+	for i := range namespaces {
+		namespaces[i] = fmt.Sprintf("ns-%d", i)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace="+strings.Join(namespaces, ","), nil)
+	rec := httptest.NewRecorder()
+
+	api.TopologyHandler(prom)(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTopologyHandler_AllNamespaces_NotSubjectToMax(t *testing.T) {
+	prom := fakePromAPI(t, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace="+topology.AllNamespaces, nil)
 	rec := httptest.NewRecorder()
 
 	api.TopologyHandler(prom)(rec, req)

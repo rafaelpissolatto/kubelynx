@@ -57,7 +57,7 @@ const fullAttributeResult = `{
 func TestBuildTopology_FullAttributeSeries(t *testing.T) {
 	api := newFakeAPI(t, fullAttributeResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, "demo-backend")
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"})
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
@@ -122,7 +122,7 @@ const partialAttributeResult = `{
 func TestBuildTopology_PartialAttributeSeries_DegradesGracefully(t *testing.T) {
 	api := newFakeAPI(t, partialAttributeResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, "demo-backend")
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"})
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
@@ -162,7 +162,7 @@ const emptyResult = `{
 func TestBuildTopology_EmptyResult(t *testing.T) {
 	api := newFakeAPI(t, emptyResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, "empty-namespace")
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"empty-namespace"})
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestBuildTopology_PrometheusUnreachable(t *testing.T) {
 	}
 	api := promv1.NewAPI(client)
 
-	_, err = topology.BuildTopology(context.Background(), api, "demo-backend")
+	_, err = topology.BuildTopology(context.Background(), api, []string{"demo-backend"})
 	if err == nil {
 		t.Fatal("BuildTopology: want error for unreachable Prometheus, got nil")
 	}
@@ -204,7 +204,7 @@ func TestBuildTopology_AllNamespaces_OmitsNamespaceFilter(t *testing.T) {
 	}
 	api := promv1.NewAPI(client)
 
-	if _, err := topology.BuildTopology(context.Background(), api, topology.AllNamespaces); err != nil {
+	if _, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces}); err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
@@ -216,12 +216,83 @@ func TestBuildTopology_AllNamespaces_OmitsNamespaceFilter(t *testing.T) {
 func TestBuildTopology_AllNamespaces_ReturnsWorkloadsAcrossNamespaces(t *testing.T) {
 	api := newFakeAPI(t, fullAttributeResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, topology.AllNamespaces)
+	graph, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces})
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 	if len(graph.Nodes) != 2 {
 		t.Fatalf("want 2 nodes, got %d: %+v", len(graph.Nodes), graph.Nodes)
+	}
+}
+
+func TestBuildTopology_MultipleNamespaces_MatchesAny(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parsing form: %v", err)
+		}
+		gotQuery = r.FormValue("query")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, emptyResult)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := promapi.NewClient(promapi.Config{Address: srv.URL})
+	if err != nil {
+		t.Fatalf("creating prometheus client: %v", err)
+	}
+	api := promv1.NewAPI(client)
+
+	if _, err := topology.BuildTopology(context.Background(), api, []string{"demo-frontend", "demo-backend"}); err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+
+	if !strings.Contains(gotQuery, `k8s_src_namespace=~"demo-frontend|demo-backend"`) {
+		t.Errorf("query %q does not match on either requested namespace via src", gotQuery)
+	}
+	if !strings.Contains(gotQuery, `k8s_dst_namespace=~"demo-frontend|demo-backend"`) {
+		t.Errorf("query %q does not match on either requested namespace via dst", gotQuery)
+	}
+}
+
+func TestBuildTopology_MultipleNamespaces_ReturnsWorkloadsFromEither(t *testing.T) {
+	api := newFakeAPI(t, fullAttributeResult, http.StatusOK)
+
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-frontend", "demo-backend"})
+	if err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+	if len(graph.Nodes) != 2 {
+		t.Fatalf("want 2 nodes, got %d: %+v", len(graph.Nodes), graph.Nodes)
+	}
+}
+
+func TestBuildTopology_NamespaceWithRegexMetacharacters_IsEscaped(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parsing form: %v", err)
+		}
+		gotQuery = r.FormValue("query")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, emptyResult)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := promapi.NewClient(promapi.Config{Address: srv.URL})
+	if err != nil {
+		t.Fatalf("creating prometheus client: %v", err)
+	}
+	api := promv1.NewAPI(client)
+
+	if _, err := topology.BuildTopology(context.Background(), api, []string{"weird.ns", "another+ns"}); err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+
+	// regexp.QuoteMeta escapes "." to `\.`; embedding that in the PromQL
+	// query text via %q escapes the backslash again, so the wire text
+	// carries two backslashes — which Prometheus's own string parsing
+	// collapses back to the single literal `\.` regexp.QuoteMeta intended.
+	if !strings.Contains(gotQuery, `weird\\.ns`) || !strings.Contains(gotQuery, `another\\+ns`) {
+		t.Errorf("query %q does not escape regex metacharacters in namespace names", gotQuery)
 	}
 }
 
@@ -242,7 +313,7 @@ func TestBuildTopology_ExcludesResponseDirection(t *testing.T) {
 	}
 	api := promv1.NewAPI(client)
 
-	if _, err := topology.BuildTopology(context.Background(), api, "demo-backend"); err != nil {
+	if _, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}); err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
@@ -291,7 +362,7 @@ const duplicateCaptureResult = `{
 func TestBuildTopology_AggregatesDuplicateCapturePoints(t *testing.T) {
 	api := newFakeAPI(t, duplicateCaptureResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, "demo-backend")
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"})
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
@@ -317,7 +388,7 @@ func TestBuildTopology_AggregatesDuplicateCapturePoints(t *testing.T) {
 func TestBuildTopology_PrometheusErrors(t *testing.T) {
 	api := newFakeAPI(t, `{"status":"error","errorType":"internal","error":"boom"}`, http.StatusInternalServerError)
 
-	_, err := topology.BuildTopology(context.Background(), api, "demo-backend")
+	_, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"})
 	if err == nil {
 		t.Fatal("BuildTopology: want error for erroring Prometheus, got nil")
 	}
