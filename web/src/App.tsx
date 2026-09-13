@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Background, ReactFlow, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './App.css'
@@ -18,6 +18,8 @@ import { NamespaceMultiSelect } from './components/NamespaceMultiSelect'
 import { ProtocolFilter } from './components/ProtocolFilter'
 import { FlowsTable } from './components/FlowsTable'
 import { FlowDetailPanel } from './components/FlowDetailPanel'
+import { ThemeToggle } from './components/ThemeToggle'
+import { BandArrangementToggle } from './components/BandArrangementToggle'
 import {
   clampFlowsPanelWidth,
   loadFlowsPanelWidth,
@@ -25,10 +27,18 @@ import {
   MIN_FLOWS_PANEL_WIDTH,
   MAX_FLOWS_PANEL_WIDTH,
 } from './lib/resizablePanel'
+import { loadTheme, saveTheme, resolveTheme, type Theme } from './lib/theme'
+import {
+  loadBandArrangement,
+  saveBandArrangement,
+  type BandArrangement,
+} from './lib/bandArrangement'
 
 const FLOWS_PANEL_RESIZE_STEP = 20
 
-const SELECTED_FLOW_STROKE = '#f2c078'
+// Fallback used only until the --accent custom property has been read from
+// the DOM once (see accentColor below) — matches the dark theme's default.
+const DEFAULT_ACCENT = '#f2c078'
 const UNSELECTED_FLOW_OPACITY = 0.35
 
 const DEFAULT_NAMESPACE = 'default'
@@ -48,9 +58,13 @@ type LoadState =
   | { status: 'error'; kind: ErrorKind; message: string }
   | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
 
-async function loadTopology(namespace: string, protocol: ProtocolFilterValue) {
+async function loadTopology(
+  namespace: string,
+  protocol: ProtocolFilterValue,
+  bandArrangement: BandArrangement,
+) {
   const graph = await fetchTopology(namespace, protocol)
-  const { nodes, edges } = await layoutGraph(graph)
+  const { nodes, edges } = await layoutGraph(graph, bandArrangement)
   return { nodes, edges, graph }
 }
 
@@ -104,6 +118,45 @@ function App() {
   const [flowsPanelWidth, setFlowsPanelWidth] = useState(() =>
     loadFlowsPanelWidth(window.innerWidth),
   )
+  const [theme, setTheme] = useState<Theme>(loadTheme)
+  // Only consulted when theme === 'system' (see resolveTheme) — tracked as
+  // state, rather than read once, so an OS-level light/dark switch updates
+  // the app live without needing a reload.
+  const [systemPrefersDark, setSystemPrefersDark] = useState(
+    () => window.matchMedia('(prefers-color-scheme: dark)').matches,
+  )
+  const resolvedTheme = resolveTheme(theme, systemPrefersDark)
+  const appRef = useRef<HTMLDivElement>(null)
+  // Edge stroke color is set inline (React Flow edge style), which can't
+  // reference a CSS custom property directly — so the selected-flow stroke
+  // is read from --accent after each theme change instead of duplicating
+  // its light/dark values by hand, keeping App.css the single source of
+  // truth for the accent color.
+  const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT)
+  const [bandArrangement, setBandArrangement] = useState<BandArrangement>(loadBandArrangement)
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (event: MediaQueryListEvent) => setSystemPrefersDark(event.matches)
+    media.addEventListener('change', onChange)
+    return () => media.removeEventListener('change', onChange)
+  }, [])
+
+  useEffect(() => {
+    if (!appRef.current) return
+    const value = getComputedStyle(appRef.current).getPropertyValue('--accent').trim()
+    if (value) setAccentColor(value)
+  }, [resolvedTheme])
+
+  function handleThemeChange(next: Theme) {
+    setTheme(next)
+    saveTheme(next)
+  }
+
+  function handleBandArrangementChange(next: BandArrangement) {
+    setBandArrangement(next)
+    saveBandArrangement(next)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -149,7 +202,7 @@ function App() {
     setState({ status: 'loading' })
     setSelectedFlowId(null)
 
-    loadTopology(namespaceParam, protocol)
+    loadTopology(namespaceParam, protocol, bandArrangement)
       .then((result) => {
         if (!cancelled) setState({ status: 'ready', ...result })
       })
@@ -162,15 +215,15 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [namespaceParam, protocol])
+  }, [namespaceParam, protocol, bandArrangement])
 
   // A failed background refresh doesn't replace the last-rendered graph with
   // an error screen — it just logs and leaves the graph as-is; the
   // unreachable/invalid/empty states above only ever come from the initial
-  // (or namespace/protocol-change-triggered) load.
+  // (or namespace/protocol/band-arrangement-change-triggered) load.
   const refreshInBackground = useCallback(
     (cancelledRef: { current: boolean }) => {
-      loadTopology(namespaceParam, protocol)
+      loadTopology(namespaceParam, protocol, bandArrangement)
         .then((result) => {
           if (!cancelledRef.current) setState({ status: 'ready', ...result })
         })
@@ -178,7 +231,7 @@ function App() {
           console.error('background topology refresh failed', err)
         })
     },
-    [namespaceParam, protocol],
+    [namespaceParam, protocol, bandArrangement],
   )
 
   // Polls /api/topology on refreshIntervalMs while not paused, updating the
@@ -215,10 +268,10 @@ function App() {
     if (!selectedFlowId) return state.edges
     return state.edges.map((edge) =>
       edge.id === selectedFlowId
-        ? { ...edge, zIndex: 1, style: { ...edge.style, stroke: SELECTED_FLOW_STROKE } }
+        ? { ...edge, zIndex: 1, style: { ...edge.style, stroke: accentColor } }
         : { ...edge, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
     )
-  }, [state, selectedFlowId])
+  }, [state, selectedFlowId, accentColor])
 
   function toggleSelectedFlow(id: string) {
     setSelectedFlowId((prev) => (prev === id ? null : id))
@@ -282,7 +335,7 @@ function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app" data-theme={resolvedTheme} ref={appRef}>
       <header className="app__header">
         <span className="app__brand">KubeLynx</span>
         <NamespaceMultiSelect
@@ -293,6 +346,7 @@ function App() {
           onChange={setSelectedNamespaces}
         />
         <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
+        <BandArrangementToggle selected={bandArrangement} onChange={handleBandArrangementChange} />
         <button
           type="button"
           className="app__refresh-toggle"
@@ -301,11 +355,17 @@ function App() {
         >
           {paused ? '▶ Resume' : '⏸ Pause'}
         </button>
+        <ThemeToggle selected={theme} onChange={handleThemeChange} />
         {summary && <span className="app__summary">{summary}</span>}
       </header>
       <div className="app__body">
         <main className="app__canvas">
-          {state.status === 'loading' && <div className="app__status">Loading topology…</div>}
+          {state.status === 'loading' && (
+            <div className="app__status app__status--loading">
+              <span className="app__spinner" aria-hidden="true" />
+              <span>Loading topology…</span>
+            </div>
+          )}
           {state.status === 'error' && state.kind === 'unreachable' && (
             <div className="app__status app__status--error">
               <strong>Prometheus unreachable.</strong> {state.message}
@@ -340,7 +400,7 @@ function App() {
               onEdgeClick={(_, edge) => toggleSelectedFlow(edge.id)}
               onPaneClick={() => setSelectedFlowId(null)}
             >
-              <Background />
+              <Background color="var(--rf-background-dot)" />
             </ReactFlow>
           )}
         </main>

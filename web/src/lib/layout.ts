@@ -1,6 +1,7 @@
 import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js'
 import type { Edge, Node } from '@xyflow/react'
 import { flowId, type Flow, type Graph, type Workload } from './topology'
+import type { BandArrangement } from './bandArrangement'
 
 const elk = new ELK()
 
@@ -12,6 +13,13 @@ export const NODE_HEIGHT = 72
 const MIN_STROKE = 1.5
 const MAX_STROKE = 8
 
+// Traffic-rate-to-animation-speed mapping: busier edges pulse faster (a
+// shorter dash-cycle duration) so throughput is visible at a glance, not
+// just inferable from stroke width. Same log scale as edgeStrokeWidth so the
+// two visual cues agree on what counts as "busy".
+const MAX_ANIMATION_DURATION_S = 2
+const MIN_ANIMATION_DURATION_S = 0.3
+
 // Swimlane band layout constants: a namespace with multiple namespaces in
 // view gets stacked, labeled bands rather than one undifferentiated canvas.
 const BAND_GAP = 48
@@ -19,10 +27,44 @@ const BAND_PADDING_X = 24
 const BAND_PADDING_BOTTOM = 24
 const BAND_HEADER_HEIGHT = 40
 
+type ResolvedBandArrangement = 'vertical' | 'horizontal'
+
+// 'auto' picks horizontal once stacking every band's *actual* height (from
+// its own ELK sub-layout — see layoutSwimlanes) would need more vertical
+// space than the viewport gives it, so the common case (a handful of small
+// namespaces) stays vertical while either many namespaces or a few
+// workload-heavy ones avoid forcing excessive scrolling. Deciding this from
+// real band heights, rather than a fixed per-namespace guess, means a
+// namespace with unusually many workloads is correctly weighted too.
+function resolveBandArrangement(
+  arrangement: BandArrangement,
+  bandHeights: number[],
+  viewportHeight: number,
+): ResolvedBandArrangement {
+  if (arrangement !== 'auto') return arrangement
+  const stackedHeight = bandHeights.reduce((sum, height) => sum + height + BAND_GAP, 0)
+  return stackedHeight > viewportHeight ? 'horizontal' : 'vertical'
+}
+
+// Shared by edgeStrokeWidth and edgeAnimationDuration so both visual cues
+// agree on what counts as "busy" — null when there's no traffic to compare
+// against (maxBytesPerSecond <= 0), leaving each caller to pick its own
+// floor value for that case.
+function trafficRatio(bytesPerSecond: number, maxBytesPerSecond: number): number | null {
+  if (maxBytesPerSecond <= 0) return null
+  return Math.log1p(bytesPerSecond) / Math.log1p(maxBytesPerSecond)
+}
+
 export function edgeStrokeWidth(bytesPerSecond: number, maxBytesPerSecond: number): number {
-  if (maxBytesPerSecond <= 0) return MIN_STROKE
-  const ratio = Math.log1p(bytesPerSecond) / Math.log1p(maxBytesPerSecond)
+  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond)
+  if (ratio === null) return MIN_STROKE
   return MIN_STROKE + ratio * (MAX_STROKE - MIN_STROKE)
+}
+
+export function edgeAnimationDuration(bytesPerSecond: number, maxBytesPerSecond: number): string {
+  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond)
+  if (ratio === null) return `${MAX_ANIMATION_DURATION_S}s`
+  return `${MAX_ANIMATION_DURATION_S - ratio * (MAX_ANIMATION_DURATION_S - MIN_ANIMATION_DURATION_S)}s`
 }
 
 export function edgeLabel(flow: Flow): string {
@@ -46,7 +88,13 @@ function buildEdges(graph: Graph): Edge[] {
     source: flow.source,
     target: flow.target,
     label: edgeLabel(flow),
-    style: { strokeWidth: edgeStrokeWidth(flow.bytesPerSecond, maxBytesPerSecond) },
+    // Animated dashes convey traffic actually moving between workloads,
+    // rather than a static line implying a dormant/theoretical connection.
+    animated: true,
+    style: {
+      strokeWidth: edgeStrokeWidth(flow.bytesPerSecond, maxBytesPerSecond),
+      animationDuration: edgeAnimationDuration(flow.bytesPerSecond, maxBytesPerSecond),
+    },
     data: { flow },
   }))
 }
@@ -83,18 +131,24 @@ async function layoutFlat(
 }
 
 // layoutSwimlanes lays out each namespace's workloads independently, then
-// stacks the resulting bands vertically. Cross-namespace edges are still
-// rendered — React Flow draws them from each node's absolute position
-// regardless of which band it belongs to — they just aren't a factor in
-// intra-band node placement.
+// arranges the resulting bands either stacked vertically or side by side
+// horizontally. Cross-namespace edges are still rendered — React Flow draws
+// them from each node's absolute position regardless of which band it
+// belongs to — they just aren't a factor in intra-band node placement.
+//
+// Runs in two passes: first every namespace's own ELK sub-layout (needed to
+// know each band's real size), then — only once those real sizes are known —
+// 'auto' picks vertical or horizontal and positions are assigned. Deciding
+// the arrangement before laying anything out would mean guessing at sizes
+// ELK hasn't computed yet.
 async function layoutSwimlanes(
   graph: Graph,
   namespaces: string[],
+  arrangement: BandArrangement,
+  viewportHeight: number,
 ): Promise<{ nodes: Node<WorkloadNodeData | NamespaceBandData>[]; edges: Edge[] }> {
-  const positions = new Map<string, { x: number; y: number }>()
-  const bands: { namespace: string; y: number; width: number; height: number }[] = []
+  const namespaceLayouts: { namespace: string; layout: ElkNode; width: number; height: number }[] = []
 
-  let yOffset = 0
   for (const namespace of namespaces) {
     const nsNodes = graph.nodes.filter((n) => n.namespace === namespace)
     const nsNodeIds = new Set(nsNodes.map((n) => n.id))
@@ -114,27 +168,55 @@ async function layoutSwimlanes(
 
     const contentWidth = layout.width ?? NODE_WIDTH
     const contentHeight = layout.height ?? NODE_HEIGHT
-    const bandWidth = contentWidth + BAND_PADDING_X * 2
-    const bandHeight = BAND_HEADER_HEIGHT + contentHeight + BAND_PADDING_BOTTOM
+    namespaceLayouts.push({
+      namespace,
+      layout,
+      width: contentWidth + BAND_PADDING_X * 2,
+      height: BAND_HEADER_HEIGHT + contentHeight + BAND_PADDING_BOTTOM,
+    })
+  }
+
+  const resolvedArrangement = resolveBandArrangement(
+    arrangement,
+    namespaceLayouts.map((n) => n.height),
+    viewportHeight,
+  )
+
+  const positions = new Map<string, { x: number; y: number }>()
+  const bands: { namespace: string; x: number; y: number; width: number; height: number }[] = []
+
+  let offset = 0
+  for (const { namespace, layout, width, height } of namespaceLayouts) {
+    const bandX = resolvedArrangement === 'horizontal' ? offset : 0
+    const bandY = resolvedArrangement === 'horizontal' ? 0 : offset
 
     for (const child of layout.children ?? []) {
       positions.set(child.id, {
-        x: (child.x ?? 0) + BAND_PADDING_X,
-        y: (child.y ?? 0) + BAND_HEADER_HEIGHT + yOffset,
+        x: (child.x ?? 0) + BAND_PADDING_X + bandX,
+        y: (child.y ?? 0) + BAND_HEADER_HEIGHT + bandY,
       })
     }
 
-    bands.push({ namespace, y: yOffset, width: bandWidth, height: bandHeight })
-    yOffset += bandHeight + BAND_GAP
+    bands.push({ namespace, x: bandX, y: bandY, width, height })
+    offset += (resolvedArrangement === 'horizontal' ? width : height) + BAND_GAP
   }
 
-  const bandWidth = Math.max(...bands.map((b) => b.width), NODE_WIDTH + BAND_PADDING_X * 2)
+  // Bands share one common size along the axis perpendicular to the one
+  // they're arranged on, so every band's rectangle lines up evenly instead
+  // of being only as big as its own namespace's content.
+  if (resolvedArrangement === 'horizontal') {
+    const uniformHeight = Math.max(...bands.map((b) => b.height))
+    for (const band of bands) band.height = uniformHeight
+  } else {
+    const uniformWidth = Math.max(...bands.map((b) => b.width))
+    for (const band of bands) band.width = uniformWidth
+  }
 
   const bandNodes: Node<NamespaceBandData>[] = bands.map((band) => ({
     id: `namespace-band:${band.namespace}`,
     type: 'namespaceBand',
-    position: { x: 0, y: band.y },
-    style: { width: bandWidth, height: band.height },
+    position: { x: band.x, y: band.y },
+    style: { width: band.width, height: band.height },
     data: { namespace: band.namespace },
     selectable: false,
     draggable: false,
@@ -153,10 +235,11 @@ async function layoutSwimlanes(
 
 export async function layoutGraph(
   graph: Graph,
+  bandArrangement: BandArrangement = 'auto',
 ): Promise<{ nodes: Node<WorkloadNodeData | NamespaceBandData>[]; edges: Edge[] }> {
   const namespaces = Array.from(new Set(graph.nodes.map((n) => n.namespace))).sort()
   if (namespaces.length <= 1) {
     return layoutFlat(graph)
   }
-  return layoutSwimlanes(graph, namespaces)
+  return layoutSwimlanes(graph, namespaces, bandArrangement, window.innerHeight)
 }
