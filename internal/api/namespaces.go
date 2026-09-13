@@ -10,8 +10,18 @@ import (
 	"github.com/rafaelpissolatto/kubelynx/internal/topology"
 )
 
-// NamespacesHandler serves GET /api/namespaces, returning the sorted JSON
-// array of namespaces currently observed in Beyla's flow metrics.
+// namespacesResponse is the JSON shape served by /api/namespaces. All is
+// included so the frontend never hardcodes topology.AllNamespaces itself —
+// it always echoes back whatever value the backend expects on
+// /api/topology?namespace= to mean "every namespace".
+type namespacesResponse struct {
+	Namespaces []string `json:"namespaces"`
+	All        string   `json:"all"`
+}
+
+// NamespacesHandler serves GET /api/namespaces, returning the sorted set of
+// namespaces currently observed in Beyla's flow metrics, plus the sentinel
+// value /api/topology accepts to mean "every namespace".
 func NamespacesHandler(prom promv1.API) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		namespaces, err := topology.ListNamespaces(r.Context(), prom)
@@ -22,7 +32,8 @@ func NamespacesHandler(prom promv1.API) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(namespaces); err != nil {
+		resp := namespacesResponse{Namespaces: namespaces, All: topology.AllNamespaces}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			slog.ErrorContext(r.Context(), "encoding namespaces response", "error", err)
 		}
 	}

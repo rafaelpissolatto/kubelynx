@@ -10,6 +10,7 @@ import (
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 
 	"github.com/rafaelpissolatto/kubelynx/internal/api"
+	"github.com/rafaelpissolatto/kubelynx/internal/topology"
 )
 
 func TestNamespacesHandler_ReturnsSortedNamespaces(t *testing.T) {
@@ -40,18 +41,24 @@ func TestNamespacesHandler_ReturnsSortedNamespaces(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 
-	var namespaces []string
-	if err := json.Unmarshal(rec.Body.Bytes(), &namespaces); err != nil {
+	var resp struct {
+		Namespaces []string `json:"namespaces"`
+		All        string   `json:"all"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decoding response: %v", err)
 	}
 	want := []string{"demo-backend", "demo-frontend"}
-	if len(namespaces) != len(want) {
-		t.Fatalf("namespaces = %v, want %v", namespaces, want)
+	if len(resp.Namespaces) != len(want) {
+		t.Fatalf("namespaces = %v, want %v", resp.Namespaces, want)
 	}
 	for i, ns := range want {
-		if namespaces[i] != ns {
-			t.Errorf("namespaces[%d] = %q, want %q", i, namespaces[i], ns)
+		if resp.Namespaces[i] != ns {
+			t.Errorf("namespaces[%d] = %q, want %q", i, resp.Namespaces[i], ns)
 		}
+	}
+	if resp.All != topology.AllNamespaces {
+		t.Errorf("All = %q, want %q", resp.All, topology.AllNamespaces)
 	}
 }
 

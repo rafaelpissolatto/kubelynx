@@ -30,7 +30,17 @@ export async function fetchTopology(namespace: string): Promise<Graph> {
   return res.json()
 }
 
-export async function fetchNamespaces(): Promise<string[]> {
+// NamespacesResponse mirrors the JSON shape served by /api/namespaces
+// (internal/api.namespacesResponse in the Go backend). `all` is the
+// sentinel /api/topology?namespace= accepts to mean "every namespace" — the
+// frontend must never hardcode this value itself, since the backend is the
+// only source of truth for what it means.
+export interface NamespacesResponse {
+  namespaces: string[]
+  all: string
+}
+
+export async function fetchNamespaces(): Promise<NamespacesResponse> {
   const res = await fetch('/api/namespaces')
   if (!res.ok) {
     throw new Error(`GET /api/namespaces failed: ${res.status} ${res.statusText}`)

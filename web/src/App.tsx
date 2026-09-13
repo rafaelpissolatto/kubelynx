@@ -8,7 +8,6 @@ import { WorkloadNode } from './components/WorkloadNode'
 import { NamespaceBand } from './components/NamespaceBand'
 
 const DEFAULT_NAMESPACE = 'default'
-export const ALL_NAMESPACES = 'all'
 const nodeTypes = { workload: WorkloadNode, namespaceBand: NamespaceBand }
 
 type LoadState =
@@ -21,14 +20,21 @@ function App() {
     () => new URLSearchParams(window.location.search).get('namespace') ?? DEFAULT_NAMESPACE,
   )
   const [namespaces, setNamespaces] = useState<string[]>([])
+  // The "all namespaces" sentinel value /api/topology?namespace= accepts —
+  // sourced from /api/namespaces rather than hardcoded, so the frontend
+  // never has to agree on this string with the backend independently.
+  const [allNamespacesValue, setAllNamespacesValue] = useState<string | null>(null)
   const [state, setState] = useState<LoadState>({ status: 'loading' })
 
   useEffect(() => {
     let cancelled = false
 
     fetchNamespaces()
-      .then((ns) => {
-        if (!cancelled) setNamespaces(ns)
+      .then((res) => {
+        if (!cancelled) {
+          setNamespaces(res.namespaces)
+          setAllNamespacesValue(res.all)
+        }
       })
       .catch((err: unknown) => {
         console.error('failed to load namespaces', err)
@@ -77,7 +83,9 @@ function App() {
           onChange={(e) => setNamespace(e.target.value)}
           aria-label="Namespace"
         >
-          <option value={ALL_NAMESPACES}>All namespaces</option>
+          {allNamespacesValue !== null && (
+            <option value={allNamespacesValue}>All namespaces</option>
+          )}
           {namespaces.map((ns) => (
             <option key={ns} value={ns}>
               {ns}
