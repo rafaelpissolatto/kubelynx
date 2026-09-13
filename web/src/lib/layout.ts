@@ -12,6 +12,13 @@ export const NODE_HEIGHT = 72
 const MIN_STROKE = 1.5
 const MAX_STROKE = 8
 
+// Traffic-rate-to-animation-speed mapping: busier edges pulse faster (a
+// shorter dash-cycle duration) so throughput is visible at a glance, not
+// just inferable from stroke width. Same log scale as edgeStrokeWidth so the
+// two visual cues agree on what counts as "busy".
+const MAX_ANIMATION_DURATION_S = 2
+const MIN_ANIMATION_DURATION_S = 0.3
+
 // Swimlane band layout constants: a namespace with multiple namespaces in
 // view gets stacked, labeled bands rather than one undifferentiated canvas.
 const BAND_GAP = 48
@@ -19,10 +26,25 @@ const BAND_PADDING_X = 24
 const BAND_PADDING_BOTTOM = 24
 const BAND_HEADER_HEIGHT = 40
 
+// Shared by edgeStrokeWidth and edgeAnimationDuration so both visual cues
+// agree on what counts as "busy" — null when there's no traffic to compare
+// against (maxBytesPerSecond <= 0), leaving each caller to pick its own
+// floor value for that case.
+function trafficRatio(bytesPerSecond: number, maxBytesPerSecond: number): number | null {
+  if (maxBytesPerSecond <= 0) return null
+  return Math.log1p(bytesPerSecond) / Math.log1p(maxBytesPerSecond)
+}
+
 export function edgeStrokeWidth(bytesPerSecond: number, maxBytesPerSecond: number): number {
-  if (maxBytesPerSecond <= 0) return MIN_STROKE
-  const ratio = Math.log1p(bytesPerSecond) / Math.log1p(maxBytesPerSecond)
+  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond)
+  if (ratio === null) return MIN_STROKE
   return MIN_STROKE + ratio * (MAX_STROKE - MIN_STROKE)
+}
+
+export function edgeAnimationDuration(bytesPerSecond: number, maxBytesPerSecond: number): string {
+  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond)
+  if (ratio === null) return `${MAX_ANIMATION_DURATION_S}s`
+  return `${MAX_ANIMATION_DURATION_S - ratio * (MAX_ANIMATION_DURATION_S - MIN_ANIMATION_DURATION_S)}s`
 }
 
 export function edgeLabel(flow: Flow): string {
@@ -46,7 +68,13 @@ function buildEdges(graph: Graph): Edge[] {
     source: flow.source,
     target: flow.target,
     label: edgeLabel(flow),
-    style: { strokeWidth: edgeStrokeWidth(flow.bytesPerSecond, maxBytesPerSecond) },
+    // Animated dashes convey traffic actually moving between workloads,
+    // rather than a static line implying a dormant/theoretical connection.
+    animated: true,
+    style: {
+      strokeWidth: edgeStrokeWidth(flow.bytesPerSecond, maxBytesPerSecond),
+      animationDuration: edgeAnimationDuration(flow.bytesPerSecond, maxBytesPerSecond),
+    },
     data: { flow },
   }))
 }

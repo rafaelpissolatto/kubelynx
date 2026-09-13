@@ -305,7 +305,12 @@ function App() {
       </header>
       <div className="app__body">
         <main className="app__canvas">
-          {state.status === 'loading' && <div className="app__status">Loading topology…</div>}
+          {state.status === 'loading' && (
+            <div className="app__status app__status--loading">
+              <span className="app__spinner" aria-hidden="true" />
+              <span>Loading topology…</span>
+            </div>
+          )}
           {state.status === 'error' && state.kind === 'unreachable' && (
             <div className="app__status app__status--error">
               <strong>Prometheus unreachable.</strong> {state.message}

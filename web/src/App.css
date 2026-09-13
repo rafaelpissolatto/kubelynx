@@ -190,6 +190,29 @@ body,
   font-size: 14px;
 }
 
+.app__status--loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.app__spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #2a2a38;
+  border-top-color: #f2c078;
+  border-radius: 50%;
+  animation: app-spin 0.8s linear infinite;
+}
+
+@keyframes app-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .app__status--error {
   color: #f28b82;
 }
