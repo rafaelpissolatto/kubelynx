@@ -1,6 +1,6 @@
 import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js'
 import type { Edge, Node } from '@xyflow/react'
-import type { Flow, Graph, Workload } from './topology'
+import { flowId, type Flow, type Graph, type Workload } from './topology'
 
 const elk = new ELK()
 
@@ -41,8 +41,8 @@ const elkLayoutOptions = {
 
 function buildEdges(graph: Graph): Edge[] {
   const maxBytesPerSecond = graph.edges.reduce((max, e) => Math.max(max, e.bytesPerSecond), 0)
-  return graph.edges.map((flow, i) => ({
-    id: `e${i}-${flow.source}-${flow.target}`,
+  return graph.edges.map((flow) => ({
+    id: flowId(flow),
     source: flow.source,
     target: flow.target,
     label: edgeLabel(flow),

@@ -145,9 +145,26 @@ body,
   color: #9494a8;
 }
 
+.app__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
 .app__canvas {
   flex: 1;
   position: relative;
+  min-width: 0;
+}
+
+.app__flows-panel {
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  flex: none;
+  border-left: 1px solid #23232f;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .app__status {
@@ -197,6 +214,89 @@ body,
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.02);
   pointer-events: none;
+}
+
+.flows-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.flows-table__head-cell {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  padding: 8px 12px;
+  color: #9494a8;
+  font-weight: 500;
+  background: #14141c;
+  border-bottom: 1px solid #23232f;
+}
+
+.flows-table__cell {
+  padding: 6px 12px;
+  border-bottom: 1px solid #1c1c26;
+  white-space: nowrap;
+}
+
+.flows-table__flow-cell {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flows-table__row {
+  cursor: pointer;
+}
+
+.flows-table__row:hover {
+  background: #1a1a24;
+}
+
+.flows-table__row[aria-selected='true'] {
+  background: #262636;
+  color: #f2c078;
+}
+
+.flows-table__empty {
+  padding: 16px;
+  color: #9494a8;
+  font-size: 13px;
+}
+
+.flow-detail {
+  margin-top: auto;
+  padding: 12px;
+  border-top: 1px solid #23232f;
+  font-size: 12px;
+}
+
+.flow-detail--empty {
+  color: #9494a8;
+}
+
+.flow-detail__title {
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.flow-detail__meta {
+  color: #9494a8;
+  margin-bottom: 8px;
+}
+
+.flow-detail__query {
+  margin: 0;
+  padding: 8px;
+  background: #14141c;
+  border: 1px solid #23232f;
+  border-radius: 6px;
+  font:
+    11px ui-monospace,
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .namespace-band__label {

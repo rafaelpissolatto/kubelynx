@@ -6,6 +6,7 @@ import {
   fetchNamespaces,
   fetchProtocols,
   fetchTopology,
+  flowId,
   type Graph,
   type ProtocolFilter as ProtocolFilterValue,
 } from './lib/topology'
@@ -14,6 +15,11 @@ import { WorkloadNode } from './components/WorkloadNode'
 import { NamespaceBand } from './components/NamespaceBand'
 import { NamespaceMultiSelect } from './components/NamespaceMultiSelect'
 import { ProtocolFilter } from './components/ProtocolFilter'
+import { FlowsTable } from './components/FlowsTable'
+import { FlowDetailPanel } from './components/FlowDetailPanel'
+
+const SELECTED_FLOW_STROKE = '#f2c078'
+const UNSELECTED_FLOW_OPACITY = 0.35
 
 const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_PROTOCOL: ProtocolFilterValue = 'all'
@@ -48,6 +54,9 @@ function App() {
     return new URLSearchParams(window.location.search).get('protocol') || DEFAULT_PROTOCOL
   })
   const [state, setState] = useState<LoadState>({ status: 'loading' })
+  // Identifies the flow selected in either the table or the graph — see
+  // flowId — so the two stay in sync no matter which one triggered it.
+  const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null)
   // Configurable via ?refreshInterval=<ms>, same convention as ?namespace=.
   const [refreshIntervalMs] = useState(() => {
     const raw = Number(new URLSearchParams(window.location.search).get('refreshInterval'))
@@ -96,6 +105,7 @@ function App() {
   useEffect(() => {
     let cancelled = false
     setState({ status: 'loading' })
+    setSelectedFlowId(null)
 
     loadTopology(namespaceParam, protocol)
       .then((result) => {
@@ -152,6 +162,28 @@ function App() {
     return `${state.graph.nodes.length} workloads · ${state.graph.edges.length} flows`
   }, [state])
 
+  const selectedFlow = useMemo(() => {
+    if (state.status !== 'ready' || !selectedFlowId) return null
+    return state.graph.edges.find((flow) => flowId(flow) === selectedFlowId) ?? null
+  }, [state, selectedFlowId])
+
+  // Highlights the selected flow's edge and dims the rest, so a selection
+  // made from the table (which has no notion of edge geometry) is still
+  // visible on the graph — and vice versa, via ReactFlow's onEdgeClick below.
+  const renderedEdges = useMemo(() => {
+    if (state.status !== 'ready') return []
+    if (!selectedFlowId) return state.edges
+    return state.edges.map((edge) =>
+      edge.id === selectedFlowId
+        ? { ...edge, zIndex: 1, style: { ...edge.style, stroke: SELECTED_FLOW_STROKE } }
+        : { ...edge, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
+    )
+  }, [state, selectedFlowId])
+
+  function toggleSelectedFlow(id: string) {
+    setSelectedFlowId((prev) => (prev === id ? null : id))
+  }
+
   function handleTogglePause() {
     if (paused) {
       // Resuming restarts the polling loop — refresh right away rather than
@@ -183,28 +215,40 @@ function App() {
         </button>
         {summary && <span className="app__summary">{summary}</span>}
       </header>
-      <main className="app__canvas">
-        {state.status === 'loading' && <div className="app__status">Loading topology…</div>}
-        {state.status === 'error' && (
-          <div className="app__status app__status--error">{state.message}</div>
-        )}
-        {state.status === 'ready' && state.nodes.length === 0 && (
-          <div className="app__status">
-            No workload traffic observed in "{selectedNamespaces.join(', ')}" yet.
-          </div>
-        )}
-        {state.status === 'ready' && state.nodes.length > 0 && (
-          <ReactFlow
-            nodes={state.nodes}
-            edges={state.edges}
-            nodeTypes={nodeTypes}
-            fitView
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background />
-          </ReactFlow>
-        )}
-      </main>
+      <div className="app__body">
+        <main className="app__canvas">
+          {state.status === 'loading' && <div className="app__status">Loading topology…</div>}
+          {state.status === 'error' && (
+            <div className="app__status app__status--error">{state.message}</div>
+          )}
+          {state.status === 'ready' && state.nodes.length === 0 && (
+            <div className="app__status">
+              No workload traffic observed in "{selectedNamespaces.join(', ')}" yet.
+            </div>
+          )}
+          {state.status === 'ready' && state.nodes.length > 0 && (
+            <ReactFlow
+              nodes={state.nodes}
+              edges={renderedEdges}
+              nodeTypes={nodeTypes}
+              fitView
+              proOptions={{ hideAttribution: true }}
+              onEdgeClick={(_, edge) => toggleSelectedFlow(edge.id)}
+              onPaneClick={() => setSelectedFlowId(null)}
+            >
+              <Background />
+            </ReactFlow>
+          )}
+        </main>
+        <aside className="app__flows-panel">
+          <FlowsTable
+            flows={state.status === 'ready' ? state.graph.edges : []}
+            selectedId={selectedFlowId}
+            onSelect={toggleSelectedFlow}
+          />
+          <FlowDetailPanel flow={selectedFlow} />
+        </aside>
+      </div>
     </div>
   )
 }
