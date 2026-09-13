@@ -96,6 +96,25 @@ body,
   color: #9494a8;
 }
 
+.app__refresh-toggle {
+  font-size: 13px;
+  color: #e6e6ef;
+  background: #1a1a24;
+  border: 1px solid #2a2a38;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.app__refresh-toggle:hover {
+  background: #22222e;
+}
+
+.app__refresh-toggle[aria-pressed='true'] {
+  color: #f2c078;
+  border-color: #4a3c22;
+}
+
 .app__summary {
   font-size: 13px;
   color: #9494a8;

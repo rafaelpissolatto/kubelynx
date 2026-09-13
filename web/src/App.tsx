@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Background, ReactFlow, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './App.css'
@@ -9,12 +9,19 @@ import { NamespaceBand } from './components/NamespaceBand'
 import { NamespaceMultiSelect } from './components/NamespaceMultiSelect'
 
 const DEFAULT_NAMESPACE = 'default'
+const DEFAULT_REFRESH_INTERVAL_MS = 15000
 const nodeTypes = { workload: WorkloadNode, namespaceBand: NamespaceBand }
 
 type LoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
+
+async function loadTopology(namespace: string) {
+  const graph = await fetchTopology(namespace)
+  const { nodes, edges } = await layoutGraph(graph)
+  return { nodes, edges, graph }
+}
 
 function App() {
   const [selectedNamespaces, setSelectedNamespaces] = useState(() => {
@@ -29,6 +36,12 @@ function App() {
   const [allNamespacesValue, setAllNamespacesValue] = useState<string | null>(null)
   const [maxNamespaces, setMaxNamespaces] = useState(1)
   const [state, setState] = useState<LoadState>({ status: 'loading' })
+  // Configurable via ?refreshInterval=<ms>, same convention as ?namespace=.
+  const [refreshIntervalMs] = useState(() => {
+    const raw = Number(new URLSearchParams(window.location.search).get('refreshInterval'))
+    return raw > 0 ? raw : DEFAULT_REFRESH_INTERVAL_MS
+  })
+  const [paused, setPaused] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -56,10 +69,9 @@ function App() {
     let cancelled = false
     setState({ status: 'loading' })
 
-    fetchTopology(namespaceParam)
-      .then(async (graph) => {
-        const { nodes, edges } = await layoutGraph(graph)
-        if (!cancelled) setState({ status: 'ready', nodes, edges, graph })
+    loadTopology(namespaceParam)
+      .then((result) => {
+        if (!cancelled) setState({ status: 'ready', ...result })
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -75,10 +87,51 @@ function App() {
     }
   }, [namespaceParam])
 
+  // A failed background refresh doesn't replace the last-rendered graph with
+  // an error screen — it just logs and leaves the graph as-is (issue #8
+  // owns proper error/empty-state UX).
+  const refreshInBackground = useCallback(
+    (cancelledRef: { current: boolean }) => {
+      loadTopology(namespaceParam)
+        .then((result) => {
+          if (!cancelledRef.current) setState({ status: 'ready', ...result })
+        })
+        .catch((err: unknown) => {
+          console.error('background topology refresh failed', err)
+        })
+    },
+    [namespaceParam],
+  )
+
+  // Polls /api/topology on refreshIntervalMs while not paused, updating the
+  // rendered graph in place without disturbing the current LoadState —
+  // separate from the effect above so toggling `paused` never re-triggers
+  // the initial loading transition and the last-rendered graph stays put.
+  useEffect(() => {
+    if (paused) return
+
+    const cancelledRef = { current: false }
+    const id = setInterval(() => refreshInBackground(cancelledRef), refreshIntervalMs)
+
+    return () => {
+      cancelledRef.current = true
+      clearInterval(id)
+    }
+  }, [refreshIntervalMs, paused, refreshInBackground])
+
   const summary = useMemo(() => {
     if (state.status !== 'ready') return null
     return `${state.graph.nodes.length} workloads · ${state.graph.edges.length} flows`
   }, [state])
+
+  function handleTogglePause() {
+    if (paused) {
+      // Resuming restarts the polling loop — refresh right away rather than
+      // leaving the user staring at a stale graph until the next tick.
+      refreshInBackground({ current: false })
+    }
+    setPaused((p) => !p)
+  }
 
   return (
     <div className="app">
@@ -91,6 +144,14 @@ function App() {
           selected={selectedNamespaces}
           onChange={setSelectedNamespaces}
         />
+        <button
+          type="button"
+          className="app__refresh-toggle"
+          onClick={handleTogglePause}
+          aria-pressed={paused}
+        >
+          {paused ? '▶ Resume' : '⏸ Pause'}
+        </button>
         {summary && <span className="app__summary">{summary}</span>}
       </header>
       <main className="app__canvas">
