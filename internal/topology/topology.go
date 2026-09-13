@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,9 +19,15 @@ const metricName = "beyla_network_flow_bytes_total"
 // window is the rolling rate() interval BuildTopology queries over.
 const window = "1m"
 
-// AllNamespaces is the BuildTopology namespace value that requests every
-// namespace observed, rather than filtering to one.
+// AllNamespaces is the BuildTopology namespaces value that requests every
+// namespace observed, rather than filtering to a set.
 const AllNamespaces = "all"
+
+// MaxNamespaces caps how many namespaces a single BuildTopology call may
+// scope to (AllNamespaces is exempt). Beyond this, the resulting node/edge
+// count — and the swimlane bands the frontend renders one per namespace —
+// risks overwhelming the browser; see issue #14.
+const MaxNamespaces = 6
 
 // edgeKey identifies one logical edge: Beyla captures the same connection at
 // multiple points (once per node's DaemonSet pod, and separately pre/post
@@ -31,24 +38,26 @@ type edgeKey struct {
 }
 
 // BuildTopology queries Prometheus for beyla_network_flow_bytes_total series
-// (rate over a rolling 1m window) touching namespace — as either source or
-// destination — and assembles them into a Graph of Workload nodes and Flow
-// edges. A series missing non-identity attributes (protocol, port, ...)
-// still produces an edge, just without the missing label.
-func BuildTopology(ctx context.Context, api promv1.API, namespace string) (Graph, error) {
-	query := buildTopologyQuery(namespace)
+// (rate over a rolling 1m window) touching any of namespaces — as either
+// source or destination — and assembles them into a Graph of Workload nodes
+// and Flow edges. A series missing non-identity attributes (protocol, port,
+// ...) still produces an edge, just without the missing label. Callers
+// enforce MaxNamespaces themselves (see internal/api); BuildTopology does
+// not reject an oversized namespaces slice on its own.
+func BuildTopology(ctx context.Context, api promv1.API, namespaces []string) (Graph, error) {
+	query := buildTopologyQuery(namespaces)
 
 	result, warnings, err := api.Query(ctx, query, time.Now())
 	if err != nil {
-		return Graph{}, fmt.Errorf("querying prometheus for namespace %q: %w", namespace, err)
+		return Graph{}, fmt.Errorf("querying prometheus for namespaces %v: %w", namespaces, err)
 	}
 	if len(warnings) > 0 {
-		slog.WarnContext(ctx, "prometheus query returned warnings", "namespace", namespace, "warnings", warnings)
+		slog.WarnContext(ctx, "prometheus query returned warnings", "namespaces", namespaces, "warnings", warnings)
 	}
 
 	vector, ok := result.(model.Vector)
 	if !ok {
-		return Graph{}, fmt.Errorf("unexpected prometheus result type %T for namespace %q", result, namespace)
+		return Graph{}, fmt.Errorf("unexpected prometheus result type %T for namespaces %v", result, namespaces)
 	}
 
 	nodes := map[string]Workload{}
@@ -126,16 +135,29 @@ func BuildTopology(ctx context.Context, api promv1.API, namespace string) (Graph
 // direction!="response" drops the reverse-traffic half of each connection,
 // which Beyla reports on a fresh ephemeral dst_port per connection — without
 // this a single logical flow explodes into one series per connection
-// instead of settling on the server's port. namespace == AllNamespaces omits
-// the namespace filter entirely, matching every namespace observed.
-func buildTopologyQuery(namespace string) string {
-	if namespace == AllNamespaces {
+// instead of settling on the server's port. namespaces == [AllNamespaces]
+// omits the namespace filter entirely, matching every namespace observed;
+// otherwise the query matches a series touching any namespace in the set.
+func buildTopologyQuery(namespaces []string) string {
+	if len(namespaces) == 1 && namespaces[0] == AllNamespaces {
 		return fmt.Sprintf(`rate(%s{direction!="response"}[%s])`, metricName, window)
 	}
+	pattern := namespaceRegexPattern(namespaces)
 	return fmt.Sprintf(
-		`rate(%s{k8s_src_namespace=%q,direction!="response"}[%s]) or rate(%s{k8s_dst_namespace=%q,direction!="response"}[%s])`,
-		metricName, namespace, window, metricName, namespace, window,
+		`rate(%s{k8s_src_namespace=~%q,direction!="response"}[%s]) or rate(%s{k8s_dst_namespace=~%q,direction!="response"}[%s])`,
+		metricName, pattern, window, metricName, pattern, window,
 	)
+}
+
+// namespaceRegexPattern renders namespaces as a PromQL regex-matcher
+// alternation, escaping each name so a namespace containing a regex
+// metacharacter can't widen the match beyond an exact namespace name.
+func namespaceRegexPattern(namespaces []string) string {
+	escaped := make([]string, len(namespaces))
+	for i, ns := range namespaces {
+		escaped[i] = regexp.QuoteMeta(ns)
+	}
+	return strings.Join(escaped, "|")
 }
 
 // workloadID identifies a Workload by namespace + owner name, matching what

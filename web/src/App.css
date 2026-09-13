@@ -33,13 +33,67 @@ body,
   font-size: 16px;
 }
 
-.app__namespace-picker {
+.namespace-multiselect {
+  position: relative;
   font-size: 13px;
+}
+
+.namespace-multiselect__summary {
+  display: inline-block;
   color: #e6e6ef;
   background: #1a1a24;
   border: 1px solid #2a2a38;
   border-radius: 6px;
   padding: 4px 10px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.namespace-multiselect__summary::-webkit-details-marker {
+  display: none;
+}
+
+.namespace-multiselect__panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  display: grid;
+  gap: 4px;
+  min-width: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #1a1a24;
+  border: 1px solid #2a2a38;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.namespace-multiselect__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.namespace-multiselect__option:hover {
+  background: #22222e;
+}
+
+.namespace-multiselect__option[aria-disabled='true'] {
+  color: #5a5a68;
+  cursor: not-allowed;
+}
+
+.namespace-multiselect__hint,
+.namespace-multiselect__count {
+  margin: 0;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: #9494a8;
 }
 
 .app__summary {

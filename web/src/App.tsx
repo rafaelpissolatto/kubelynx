@@ -6,6 +6,7 @@ import { fetchNamespaces, fetchTopology, type Graph } from './lib/topology'
 import { layoutGraph } from './lib/layout'
 import { WorkloadNode } from './components/WorkloadNode'
 import { NamespaceBand } from './components/NamespaceBand'
+import { NamespaceMultiSelect } from './components/NamespaceMultiSelect'
 
 const DEFAULT_NAMESPACE = 'default'
 const nodeTypes = { workload: WorkloadNode, namespaceBand: NamespaceBand }
@@ -16,14 +17,17 @@ type LoadState =
   | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
 
 function App() {
-  const [namespace, setNamespace] = useState(
-    () => new URLSearchParams(window.location.search).get('namespace') ?? DEFAULT_NAMESPACE,
-  )
+  const [selectedNamespaces, setSelectedNamespaces] = useState(() => {
+    const raw = new URLSearchParams(window.location.search).get('namespace')
+    return raw ? raw.split(',') : [DEFAULT_NAMESPACE]
+  })
   const [namespaces, setNamespaces] = useState<string[]>([])
-  // The "all namespaces" sentinel value /api/topology?namespace= accepts —
+  // The "all namespaces" sentinel value /api/topology?namespace= accepts,
+  // and the cap on simultaneously selected namespaces it enforces — both
   // sourced from /api/namespaces rather than hardcoded, so the frontend
-  // never has to agree on this string with the backend independently.
+  // never has to agree on these values with the backend independently.
   const [allNamespacesValue, setAllNamespacesValue] = useState<string | null>(null)
+  const [maxNamespaces, setMaxNamespaces] = useState(1)
   const [state, setState] = useState<LoadState>({ status: 'loading' })
 
   useEffect(() => {
@@ -34,6 +38,7 @@ function App() {
         if (!cancelled) {
           setNamespaces(res.namespaces)
           setAllNamespacesValue(res.all)
+          setMaxNamespaces(res.max)
         }
       })
       .catch((err: unknown) => {
@@ -45,11 +50,13 @@ function App() {
     }
   }, [])
 
+  const namespaceParam = selectedNamespaces.join(',')
+
   useEffect(() => {
     let cancelled = false
     setState({ status: 'loading' })
 
-    fetchTopology(namespace)
+    fetchTopology(namespaceParam)
       .then(async (graph) => {
         const { nodes, edges } = await layoutGraph(graph)
         if (!cancelled) setState({ status: 'ready', nodes, edges, graph })
@@ -66,7 +73,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [namespace])
+  }, [namespaceParam])
 
   const summary = useMemo(() => {
     if (state.status !== 'ready') return null
@@ -77,21 +84,13 @@ function App() {
     <div className="app">
       <header className="app__header">
         <span className="app__brand">KubeLynx</span>
-        <select
-          className="app__namespace-picker"
-          value={namespace}
-          onChange={(e) => setNamespace(e.target.value)}
-          aria-label="Namespace"
-        >
-          {allNamespacesValue !== null && (
-            <option value={allNamespacesValue}>All namespaces</option>
-          )}
-          {namespaces.map((ns) => (
-            <option key={ns} value={ns}>
-              {ns}
-            </option>
-          ))}
-        </select>
+        <NamespaceMultiSelect
+          namespaces={namespaces}
+          allValue={allNamespacesValue}
+          max={maxNamespaces}
+          selected={selectedNamespaces}
+          onChange={setSelectedNamespaces}
+        />
         {summary && <span className="app__summary">{summary}</span>}
       </header>
       <main className="app__canvas">
@@ -100,7 +99,9 @@ function App() {
           <div className="app__status app__status--error">{state.message}</div>
         )}
         {state.status === 'ready' && state.nodes.length === 0 && (
-          <div className="app__status">No workload traffic observed in "{namespace}" yet.</div>
+          <div className="app__status">
+            No workload traffic observed in "{selectedNamespaces.join(', ')}" yet.
+          </div>
         )}
         {state.status === 'ready' && state.nodes.length > 0 && (
           <ReactFlow

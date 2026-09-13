@@ -32,12 +32,14 @@ export async function fetchTopology(namespace: string): Promise<Graph> {
 
 // NamespacesResponse mirrors the JSON shape served by /api/namespaces
 // (internal/api.namespacesResponse in the Go backend). `all` is the
-// sentinel /api/topology?namespace= accepts to mean "every namespace" — the
-// frontend must never hardcode this value itself, since the backend is the
-// only source of truth for what it means.
+// sentinel /api/topology?namespace= accepts to mean "every namespace", and
+// `max` is the most namespaces a single /api/topology request may be scoped
+// to (all is exempt) — the frontend must never hardcode either value
+// itself, since the backend is the only source of truth for both.
 export interface NamespacesResponse {
   namespaces: string[]
   all: string
+  max: number
 }
 
 export async function fetchNamespaces(): Promise<NamespacesResponse> {
