@@ -45,10 +45,17 @@ async function loadTopology(namespace: string, protocol: ProtocolFilterValue) {
   return { nodes, edges, graph }
 }
 
+// Status codes TopologyHandler (internal/api/topology.go) responds with:
+// 502 when BuildTopology itself failed (Prometheus unreachable, or a query
+// it ran failed), 400 when the request was rejected before querying at all
+// (too many namespaces, an invalid protocol).
+const HTTP_BAD_REQUEST = 400
+const HTTP_BAD_GATEWAY = 502
+
 function classifyTopologyError(err: unknown): { kind: ErrorKind; message: string } {
   if (err instanceof TopologyError) {
-    if (err.status === 502) return { kind: 'unreachable', message: err.message }
-    if (err.status === 400) return { kind: 'invalid', message: err.message }
+    if (err.status === HTTP_BAD_GATEWAY) return { kind: 'unreachable', message: err.message }
+    if (err.status === HTTP_BAD_REQUEST) return { kind: 'invalid', message: err.message }
   }
   return { kind: 'unknown', message: err instanceof Error ? err.message : 'Failed to load topology' }
 }
@@ -205,6 +212,12 @@ function App() {
     setSelectedFlowId((prev) => (prev === id ? null : id))
   }
 
+  // Conservative by construction: while /api/namespaces hasn't resolved yet
+  // (or failed), this stays false, so a zero-node topology result renders as
+  // the less-alarming "no traffic right now" rather than risking a false
+  // "misconfigured" warning.
+  const noTrafficEverObserved = namespacesLoaded && namespaces.length === 0
+
   function handleTogglePause() {
     if (paused) {
       // Resuming restarts the polling loop — refresh right away rather than
@@ -244,27 +257,25 @@ function App() {
               <strong>Prometheus unreachable.</strong> {state.message}
             </div>
           )}
-          {state.status === 'error' && state.kind !== 'unreachable' && (
+          {state.status === 'error' && state.kind === 'invalid' && (
+            <div className="app__status app__status--warning">{state.message}</div>
+          )}
+          {state.status === 'error' && state.kind === 'unknown' && (
             <div className="app__status app__status--error">{state.message}</div>
           )}
-          {state.status === 'ready' &&
-            state.nodes.length === 0 &&
-            namespacesLoaded &&
-            namespaces.length === 0 && (
-              <div className="app__status app__status--warning">
-                <strong>No traffic data found.</strong> Prometheus has no{' '}
-                <code>beyla_network_flow_bytes_total</code> series at all — check that Beyla's
-                network metrics feature is enabled and exporting the k8s_src/dst_namespace and
-                k8s_src/dst_owner_name attributes KubeLynx relies on.
-              </div>
-            )}
-          {state.status === 'ready' &&
-            state.nodes.length === 0 &&
-            (!namespacesLoaded || namespaces.length > 0) && (
-              <div className="app__status">
-                No workload traffic observed in "{selectedNamespaces.join(', ')}" yet.
-              </div>
-            )}
+          {state.status === 'ready' && state.nodes.length === 0 && noTrafficEverObserved && (
+            <div className="app__status app__status--warning">
+              <strong>No traffic data found.</strong> Prometheus has no{' '}
+              <code>beyla_network_flow_bytes_total</code> series at all — check that Beyla's
+              network metrics feature is enabled and exporting the k8s_src/dst_namespace and
+              k8s_src/dst_owner_name attributes KubeLynx relies on.
+            </div>
+          )}
+          {state.status === 'ready' && state.nodes.length === 0 && !noTrafficEverObserved && (
+            <div className="app__status">
+              No workload traffic observed in "{selectedNamespaces.join(', ')}" yet.
+            </div>
+          )}
           {state.status === 'ready' && state.nodes.length > 0 && (
             <ReactFlow
               nodes={state.nodes}
