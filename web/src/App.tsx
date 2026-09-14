@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Background, ReactFlow, type Edge, type Node } from '@xyflow/react'
+import { Background, Controls, ReactFlow, type Edge, type Node } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './App.css'
 import {
@@ -20,6 +20,7 @@ import { FlowsTable } from './components/FlowsTable'
 import { FlowDetailPanel } from './components/FlowDetailPanel'
 import { ThemeToggle } from './components/ThemeToggle'
 import { BandArrangementToggle } from './components/BandArrangementToggle'
+import { PanControls } from './components/PanControls'
 import {
   clampFlowsPanelWidth,
   loadFlowsPanelWidth,
@@ -401,6 +402,8 @@ function App() {
               onPaneClick={() => setSelectedFlowId(null)}
             >
               <Background color="var(--rf-background-dot)" />
+              <Controls showInteractive={false} />
+              <PanControls />
             </ReactFlow>
           )}
         </main>
