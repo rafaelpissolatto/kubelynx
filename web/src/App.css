@@ -312,6 +312,12 @@ body,
   white-space: nowrap;
 }
 
+/* Structural only — FloatingEdge computes each edge's real attachment
+   point from node geometry, so the handle itself never needs to be seen. */
+.workload-node__handle {
+  opacity: 0;
+}
+
 .workload-node__badge {
   justify-self: start;
   font:
@@ -520,6 +526,15 @@ body,
 .pan-controls__btn--down {
   grid-column: 2;
   grid-row: 2;
+}
+
+/* Default (unselected) flow edges use the same muted-text tone as the rest
+   of the chrome — React Flow's library-default gray reads as far
+   heavier/darker than the thin lines it's meant to be. --border-strong
+   isn't used here: it's calibrated for subtle dividers against surface
+   backgrounds and nearly disappears against the dark theme's canvas. */
+.react-flow__edge-path {
+  stroke: var(--text-muted);
 }
 
 .namespace-band__label {
