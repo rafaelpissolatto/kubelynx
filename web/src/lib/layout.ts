@@ -10,8 +10,8 @@ export const NODE_HEIGHT = 72
 
 // Traffic-rate-to-stroke-width mapping: log scale so a handful of KB/s and a
 // few MB/s edge don't collapse to visually identical lines.
-const MIN_STROKE = 1.5
-const MAX_STROKE = 8
+const MIN_STROKE = 1
+const MAX_STROKE = 4
 
 // Traffic-rate-to-animation-speed mapping: busier edges pulse faster (a
 // shorter dash-cycle duration) so throughput is visible at a glance, not
@@ -79,6 +79,12 @@ const elkLayoutOptions = {
   'elk.direction': 'RIGHT',
   'elk.spacing.nodeNode': '48',
   'elk.layered.spacing.nodeNodeBetweenLayers': '96',
+  // Explicit crossing-minimization plus extra room around edges gives ELK
+  // more freedom to route parallel/near-parallel flows apart before they're
+  // ever drawn, rather than leaving them to overlap visually.
+  'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+  'elk.layered.spacing.edgeEdgeBetweenLayers': '24',
+  'elk.layered.spacing.edgeNodeBetweenLayers': '24',
 }
 
 function buildEdges(graph: Graph): Edge[] {
@@ -88,9 +94,15 @@ function buildEdges(graph: Graph): Edge[] {
     source: flow.source,
     target: flow.target,
     label: edgeLabel(flow),
-    // Animated dashes convey traffic actually moving between workloads,
-    // rather than a static line implying a dormant/theoretical connection.
-    animated: true,
+    // FloatingEdge (components/FloatingEdge.tsx) computes each edge's actual
+    // border-crossing point from node geometry — a smooth elbow bend that
+    // naturally fans edges apart by angle, instead of routing every edge
+    // through the same fixed handle position.
+    type: 'floating',
+    // Animated dashes single out edges actually carrying traffic right now;
+    // a zero-byte edge stays a plain static line instead of implying
+    // movement that isn't happening.
+    animated: flow.bytesPerSecond > 0,
     style: {
       strokeWidth: edgeStrokeWidth(flow.bytesPerSecond, maxBytesPerSecond),
       animationDuration: edgeAnimationDuration(flow.bytesPerSecond, maxBytesPerSecond),
