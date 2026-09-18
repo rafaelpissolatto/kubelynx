@@ -447,6 +447,81 @@ body,
   word-break: break-word;
 }
 
+/* React Flow's built-in zoom-in/zoom-out/fit-view controls — restyled to
+   follow the theme instead of the library's baked-in light-only default. */
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.react-flow__controls-button:hover {
+  background: var(--surface-hover);
+}
+
+.react-flow__controls-button svg {
+  fill: var(--text-muted);
+}
+
+/* Directional pan buttons, laid out as a d-pad in the canvas's bottom-right
+   corner so browser-level zoom/scroll is never required to navigate the
+   graph — see components/PanControls.tsx. */
+.pan-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: repeat(3, 28px);
+  grid-template-rows: repeat(2, 28px);
+  gap: 2px;
+}
+
+.pan-controls__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.pan-controls__btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.pan-controls__btn--up {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.pan-controls__btn--left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.pan-controls__btn--right {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.pan-controls__btn--down {
+  grid-column: 2;
+  grid-row: 2;
+}
+
 .namespace-band__label {
   position: absolute;
   top: 8px;
