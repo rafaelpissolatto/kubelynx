@@ -23,8 +23,10 @@ const DefaultNamespace = "default"
 // a graph too big for the browser to lay out and render. protocol defaults
 // to topology.ProtocolAll and must otherwise be one of topology.ValidProtocols;
 // classes governs how topology.ProtocolHTTP and topology.ProtocolGRPC are
-// recognized (see topology.ProtocolClasses).
-func TopologyHandler(prom promv1.API, classes topology.ProtocolClasses) http.HandlerFunc {
+// recognized (see topology.ProtocolClasses). cardinality governs which TCP
+// ports get individual edges vs. folding into topology.MultiplePorts (see
+// topology.PortCardinality).
+func TopologyHandler(prom promv1.API, classes topology.ProtocolClasses, cardinality topology.PortCardinality) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		namespaces := parseNamespaces(r.URL.Query().Get("namespace"))
 
@@ -39,7 +41,7 @@ func TopologyHandler(prom promv1.API, classes topology.ProtocolClasses) http.Han
 			return
 		}
 
-		graph, err := topology.BuildTopology(r.Context(), prom, namespaces, protocol, classes)
+		graph, err := topology.BuildTopology(r.Context(), prom, namespaces, protocol, classes, cardinality)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "building topology", "namespaces", namespaces, "protocol", protocol, "error", err)
 			http.Error(w, "failed to query prometheus", http.StatusBadGateway)

@@ -50,10 +50,14 @@ type edgeKey struct {
 // ...) still produces an edge, just without the missing label. protocol
 // scopes the query to one of ValidProtocols (classes governs how ProtocolHTTP
 // and ProtocolGRPC are recognized; see ProtocolClasses) — ProtocolAll applies
-// no protocol scoping. Callers enforce MaxNamespaces and IsValidProtocol
-// themselves (see internal/api); BuildTopology does not reject an oversized
-// namespaces slice or invalid protocol on its own.
-func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, protocol string, classes ProtocolClasses) (Graph, error) {
+// no protocol scoping. cardinality bounds per-port detail: ports outside it
+// are folded into a single MultiplePorts edge per (source, target, protocol)
+// pair instead of one edge per port (see PortCardinality and boundedPort) —
+// this keeps ephemeral/dynamic ports from exploding the returned edge count.
+// Callers enforce MaxNamespaces and IsValidProtocol themselves (see
+// internal/api); BuildTopology does not reject an oversized namespaces slice
+// or invalid protocol on its own.
+func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, protocol string, classes ProtocolClasses, cardinality PortCardinality) (Graph, error) {
 	query := buildTopologyQuery(namespaces, protocol, classes)
 
 	result, warnings, err := api.Query(ctx, query, time.Now())
@@ -101,11 +105,12 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, pro
 			OwnerKind: normalizeOwnerKind(string(metric["k8s_dst_owner_type"])),
 		})
 
+		flowProtocol := string(metric["transport"])
 		key := edgeKey{
 			source:   srcID,
 			target:   dstID,
-			protocol: string(metric["transport"]),
-			port:     string(metric["dst_port"]),
+			protocol: flowProtocol,
+			port:     boundedPort(flowProtocol, string(metric["dst_port"]), cardinality),
 		}
 		if _, seen := edgeBytes[key]; !seen {
 			edgeOrder = append(edgeOrder, key)
@@ -127,7 +132,7 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, pro
 			Protocol:       key.protocol,
 			Port:           key.port,
 			BytesPerSecond: edgeBytes[key],
-			Query:          edgeQuery(nodes[key.source], nodes[key.target], key.protocol, key.port),
+			Query:          edgeQuery(nodes[key.source], nodes[key.target], key.protocol, key.port, cardinality),
 		})
 	}
 	sort.Slice(edges, func(i, j int) bool {
@@ -250,8 +255,10 @@ func normalizeOwnerKind(kind string) string {
 // edgeQuery renders the PromQL query for one aggregated edge: a sum() over
 // every capture point sharing this edge's endpoint identity, protocol, and
 // port (owner-kind and instance/pod labels are deliberately excluded, since
-// those vary by capture point for what's the same logical edge).
-func edgeQuery(src, dst Workload, protocol, port string) string {
+// those vary by capture point for what's the same logical edge). For a
+// MultiplePorts edge, port narrows to the ports cardinality folded into it
+// (via portExclusionMatcher) rather than matching a literal "multiple" port.
+func edgeQuery(src, dst Workload, protocol, port string, cardinality PortCardinality) string {
 	matchers := []string{
 		fmt.Sprintf("k8s_src_owner_name=%s", strconv.Quote(src.Name)),
 		fmt.Sprintf("k8s_src_namespace=%s", strconv.Quote(src.Namespace)),
@@ -261,7 +268,14 @@ func edgeQuery(src, dst Workload, protocol, port string) string {
 	if protocol != "" {
 		matchers = append(matchers, fmt.Sprintf("transport=%s", strconv.Quote(protocol)))
 	}
-	if port != "" {
+	switch port {
+	case "":
+		// No port attribute to scope by (attribute-degraded series).
+	case MultiplePorts:
+		if m := portExclusionMatcher(protocol, cardinality); m != "" {
+			matchers = append(matchers, m)
+		}
+	default:
 		matchers = append(matchers, fmt.Sprintf("dst_port=%s", strconv.Quote(port)))
 	}
 	return fmt.Sprintf("sum(rate(%s{%s}[%s]))", metricName, strings.Join(matchers, ","), window)
