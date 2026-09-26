@@ -271,8 +271,8 @@ function App() {
     if (!selectedFlowId) return state.edges
     return state.edges.map((edge) =>
       edge.id === selectedFlowId
-        ? { ...edge, zIndex: 1, style: { ...edge.style, stroke: accentColor } }
-        : { ...edge, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
+        ? { ...edge, selected: true, zIndex: 1, style: { ...edge.style, stroke: accentColor } }
+        : { ...edge, selected: false, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
     )
   }, [state, selectedFlowId, accentColor])
 
