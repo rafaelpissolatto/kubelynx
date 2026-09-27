@@ -295,24 +295,28 @@ body,
   border-radius: 4px;
 }
 
-/* width must match NODE_WIDTH in lib/layout.ts — ELK lays out nodes assuming
-   this exact box size, so a mismatch reintroduces overlap with neighbors. */
+/* Geometry (padding, border, gap, fonts, line heights) must match the
+   NODE_* constants in lib/layout.ts — the box's size is computed there
+   (workloadNodeSize) and ELK lays out nodes assuming it, so a mismatch
+   reintroduces overlap with neighbors or clips content. */
 .workload-node {
   box-sizing: border-box;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 10px 14px;
-  /* Width comes from the React Flow node (workloadNodeWidth in
-     lib/layout.ts), sized to fit the full name on one line. */
+  /* Size comes from the React Flow node (workloadNodeSize). */
   width: 100%;
+  height: 100%;
   display: grid;
+  align-content: start;
   gap: 6px;
 }
 
 .workload-node__name {
   font-weight: 500;
   font-size: 13px;
+  line-height: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -326,14 +330,28 @@ body,
 
 .workload-node__badge {
   justify-self: start;
+  box-sizing: border-box;
+  height: 16px;
   font:
-    10px ui-monospace,
+    10px/14px ui-monospace,
     Menlo,
     monospace;
+  white-space: nowrap;
   padding: 1px 6px;
   border-radius: 4px;
   background: var(--surface-selected);
   color: var(--badge-text);
+}
+
+.workload-node__ports {
+  display: flex;
+  gap: 4px;
+}
+
+/* The aggregated "multiple" bucket (issue #38) isn't one real port, so it
+   reads quieter than the itemized ones next to it. */
+.workload-node__badge--aggregate {
+  opacity: 0.7;
 }
 
 .namespace-band {
