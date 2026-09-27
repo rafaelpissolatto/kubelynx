@@ -3,6 +3,7 @@ import { MarkerType, type Edge, type Node } from '@xyflow/react'
 import { flowId, type Flow, type Graph, type Workload } from './topology'
 import type { BandArrangement } from './bandArrangement'
 import type { NodePositionMap } from './nodePositions'
+import type { EdgeRoute } from './edgeRoute'
 
 const elk = new ELK()
 
@@ -180,9 +181,34 @@ const elkLayoutOptions = {
   'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
   'elk.layered.spacing.edgeEdgeBetweenLayers': '24',
   'elk.layered.spacing.edgeNodeBetweenLayers': '24',
+  // Orthogonal is already the layered default; stated explicitly because the
+  // routes it produces are now rendered (issue #39 — see collectRoutes),
+  // not discarded.
+  'elk.edgeRouting': 'ORTHOGONAL',
 }
 
-function buildEdges(graph: Graph): Edge[] {
+// Reads the obstacle-aware edge routes ELK computed alongside node
+// positions, translated by `offset` into the same absolute frame the nodes
+// are placed in. Keyed by flowId — the ELK edge ids are flowIds for this.
+function collectRoutes(layout: ElkNode, offset: { x: number; y: number }, routes: Map<string, EdgeRoute>) {
+  const nodeAt = new Map((layout.children ?? []).map((c) => [c.id, { x: (c.x ?? 0) + offset.x, y: (c.y ?? 0) + offset.y }]))
+  for (const edge of layout.edges ?? []) {
+    const section = edge.sections?.[0]
+    const source = nodeAt.get(edge.sources[0])
+    const target = nodeAt.get(edge.targets[0])
+    if (!section || !source || !target) continue
+    const shift = (p: { x: number; y: number }) => ({ x: p.x + offset.x, y: p.y + offset.y })
+    routes.set(edge.id, {
+      points: [section.startPoint, ...(section.bendPoints ?? []), section.endPoint].map(shift),
+      source,
+      target,
+    })
+  }
+}
+
+// `routes` covers only edges ELK laid out (both endpoints in the same ELK
+// graph); FloatingEdge falls back to its own elbow geometry for the rest.
+function buildEdges(graph: Graph, routes: Map<string, EdgeRoute>): Edge[] {
   const maxBytesPerSecond = graph.edges.reduce((max, e) => Math.max(max, e.bytesPerSecond), 0)
   return graph.edges.map((flow) => ({
     id: flowId(flow),
@@ -199,7 +225,11 @@ function buildEdges(graph: Graph): Edge[] {
     // zero-traffic edges, which have no moving dots to show it.
     markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--edge-stroke)' },
     // FloatingEdge renders these as dots moving along the edge's path.
-    data: { flow, trafficDots: edgeTrafficDots(flow.bytesPerSecond, maxBytesPerSecond) },
+    data: {
+      flow,
+      trafficDots: edgeTrafficDots(flow.bytesPerSecond, maxBytesPerSecond),
+      route: routes.get(flowId(flow)),
+    },
   }))
 }
 
@@ -296,14 +326,16 @@ async function layoutFlat(
     id: 'root',
     layoutOptions: elkLayoutOptions,
     children: graph.nodes.map((n) => ({ id: n.id, ...sizes.get(n.id)! })),
-    edges: graph.edges.map((e, i) => ({
-      id: `e${i}-${e.source}-${e.target}`,
+    edges: graph.edges.map((e) => ({
+      id: flowId(e),
       sources: [e.source],
       targets: [e.target],
     })),
   }
 
   const layout = await elk.layout(elkGraph)
+  const routes = new Map<string, EdgeRoute>()
+  collectRoutes(layout, { x: 0, y: 0 }, routes)
 
   const autoPositions = new Map<string, { x: number; y: number }>()
   for (const child of layout.children ?? []) {
@@ -320,7 +352,7 @@ async function layoutFlat(
     data: { workload, ports: ports.get(workload.id) ?? [] },
   }))
 
-  return { nodes, edges: buildEdges(graph), positions }
+  return { nodes, edges: buildEdges(graph, routes), positions }
 }
 
 // layoutSwimlanes lays out each namespace's workloads independently, then
@@ -358,8 +390,8 @@ async function layoutSwimlanes(
       id: namespace,
       layoutOptions: elkLayoutOptions,
       children: nsNodes.map((n) => ({ id: n.id, ...sizes.get(n.id)! })),
-      edges: nsEdges.map((e, i) => ({
-        id: `e${namespace}-${i}-${e.source}-${e.target}`,
+      edges: nsEdges.map((e) => ({
+        id: flowId(e),
         sources: [e.source],
         targets: [e.target],
       })),
@@ -383,6 +415,7 @@ async function layoutSwimlanes(
   )
 
   const autoPositions = new Map<string, { x: number; y: number }>()
+  const routes = new Map<string, EdgeRoute>()
   const bands: { namespace: string; x: number; y: number; width: number; height: number }[] = []
 
   let offset = 0
@@ -390,6 +423,7 @@ async function layoutSwimlanes(
     const bandX = resolvedArrangement === 'horizontal' ? offset : 0
     const bandY = resolvedArrangement === 'horizontal' ? 0 : offset
 
+    collectRoutes(layout, { x: BAND_PADDING_X + bandX, y: BAND_HEADER_HEIGHT + bandY }, routes)
     for (const child of layout.children ?? []) {
       autoPositions.set(child.id, {
         x: (child.x ?? 0) + BAND_PADDING_X + bandX,
@@ -443,7 +477,7 @@ async function layoutSwimlanes(
     data: { workload, ports: ports.get(workload.id) ?? [] },
   }))
 
-  return { nodes: [...bandNodes, ...workloadNodes], edges: buildEdges(graph), positions }
+  return { nodes: [...bandNodes, ...workloadNodes], edges: buildEdges(graph, routes), positions }
 }
 
 type Rect = { x: number; y: number; width: number; height: number }

@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { BaseEdge, useInternalNode, getSmoothStepPath, type EdgeProps } from '@xyflow/react'
+import { BaseEdge, useInternalNode, getSmoothStepPath, type EdgeProps, type InternalNode } from '@xyflow/react'
 import { getEdgeParams } from '../lib/floatingEdge'
 import type { TrafficDots } from '../lib/layout'
+import { placeRoute, roundedPolylinePath, type EdgeRoute } from '../lib/edgeRoute'
 
 // Corner radius for the elbow bend — larger than smoothstep's tiny default
 // so turns read as a deliberate curve rather than a sharp right angle.
@@ -27,15 +28,8 @@ const TRAFFIC_DOT_RADIUS = 3
 // at the cost of one extra interaction to read a specific edge's port. The
 // flows table already lists every edge's protocol/port as an always-visible
 // source of truth, so nothing is lost — this only affects the canvas.
-export function FloatingEdge({ id, source, target, markerEnd, style, label, selected, data }: EdgeProps) {
-  const [hovered, setHovered] = useState(false)
-  const sourceNode = useInternalNode(source)
-  const targetNode = useInternalNode(target)
-
-  if (!sourceNode || !targetNode) return null
-
+function floatingElbowPath(sourceNode: InternalNode, targetNode: InternalNode): [string, number, number] {
   const { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(sourceNode, targetNode)
-
   const [path, labelX, labelY] = getSmoothStepPath({
     sourceX: sx,
     sourceY: sy,
@@ -45,6 +39,28 @@ export function FloatingEdge({ id, source, target, markerEnd, style, label, sele
     targetPosition: targetPos,
     borderRadius: BORDER_RADIUS,
   })
+  return [path, labelX, labelY]
+}
+
+export function FloatingEdge({ id, source, target, markerEnd, style, label, selected, data }: EdgeProps) {
+  const [hovered, setHovered] = useState(false)
+  const sourceNode = useInternalNode(source)
+  const targetNode = useInternalNode(target)
+
+  if (!sourceNode || !targetNode) return null
+
+  // Prefer the obstacle-aware route ELK computed during layout (issue #39);
+  // it's dropped once a drag moves the endpoints apart from where ELK placed
+  // them (see placeRoute), and edges ELK never routed (cross-namespace) have
+  // none — both fall back to the floating elbow below.
+  const route = data?.route as EdgeRoute | undefined
+  const routePoints = route
+    ? placeRoute(route, sourceNode.internals.positionAbsolute, targetNode.internals.positionAbsolute)
+    : null
+
+  const [path, labelX, labelY] = routePoints
+    ? roundedPolylinePath(routePoints, BORDER_RADIUS)
+    : floatingElbowPath(sourceNode, targetNode)
 
   const showLabel = hovered || selected
   const trafficDots = data?.trafficDots as TrafficDots | null | undefined
