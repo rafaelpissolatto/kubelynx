@@ -34,6 +34,25 @@ data:
             - dst.port
             - direction
 
+    # Bounds dst.port cardinality. On reply traffic, dst.port is the client's
+    # ephemeral port, so every connection otherwise mints new series (~99% of
+    # beyla_network_flow_bytes series and ~18.7k new series/hour in the dev
+    # cluster). Only flows to a port below Linux's default ephemeral range
+    # (32768, see net.ipv4.ip_local_port_range) or to a listed high server
+    # port are kept; the rest are dropped, not aggregated.
+    #
+    # Trade-off: dropped flows are mostly response payloads, so byte rates
+    # reflect the request direction only (~15% of raw bytes in the dev
+    # cluster). Clusters that widen ip_local_port_range, or serve on other
+    # ports >= 32768, must adjust the pattern. One glob (gobwas/glob) is used
+    # instead of `less_than: 32768` because a single attribute can't combine a
+    # numeric bound with a list: the pattern reads "any 1-4 digit port, or
+    # 10000-32767, or 50051 (gRPC)".
+    filter:
+      network:
+        dst_port:
+          match: "{?,??,???,????,[12]????,3[01]???,32[0-6]??,327[0-5]?,3276[0-7],50051}"
+
     # Network-only: KubeLynx doesn't consume Beyla's application/HTTP
     # instrumentation, so there's no `discovery.services` scoping and no
     # `application` feature below — just L3/L4 flow capture.
