@@ -12,6 +12,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import './App.css'
 import {
+  fetchConfig,
   fetchNamespaces,
   fetchProtocols,
   fetchTopology,
@@ -60,6 +61,8 @@ const UNSELECTED_FLOW_OPACITY = 0.35
 
 const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_PROTOCOL: ProtocolFilterValue = 'all'
+// Only used until /api/config answers (or if it fails): the backend's
+// --refresh-interval, 15s by default, is the real source of truth.
 const DEFAULT_REFRESH_INTERVAL_MS = 15000
 const nodeTypes = { workload: WorkloadNode, namespaceBand: NamespaceBand }
 const edgeTypes = { floating: FloatingEdge }
@@ -132,11 +135,16 @@ function App() {
   // Identifies the flow selected in either the table or the graph — see
   // flowId — so the two stay in sync no matter which one triggered it.
   const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null)
-  // Configurable via ?refreshInterval=<ms>, same convention as ?namespace=.
-  const [refreshIntervalMs] = useState(() => {
+  // The backend's --refresh-interval (see the /api/config effect below) sets
+  // the default; ?refreshInterval=<ms> overrides it, same convention as
+  // ?namespace=.
+  const [refreshIntervalOverrideMs] = useState(() => {
     const raw = Number(new URLSearchParams(window.location.search).get('refreshInterval'))
-    return raw > 0 ? raw : DEFAULT_REFRESH_INTERVAL_MS
+    return raw > 0 ? raw : null
   })
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(
+    refreshIntervalOverrideMs ?? DEFAULT_REFRESH_INTERVAL_MS,
+  )
   const [paused, setPaused] = useState(false)
   const [flowsPanelWidth, setFlowsPanelWidth] = useState(() =>
     loadFlowsPanelWidth(window.innerWidth),
@@ -175,6 +183,24 @@ function App() {
     const value = getComputedStyle(appRef.current).getPropertyValue('--accent').trim()
     if (value) setAccentColor(value)
   }, [resolvedTheme])
+
+  useEffect(() => {
+    if (refreshIntervalOverrideMs !== null) return
+    let cancelled = false
+
+    fetchConfig()
+      .then((res) => {
+        if (!cancelled && res.refreshIntervalMs > 0) setRefreshIntervalMs(res.refreshIntervalMs)
+      })
+      .catch((err) => {
+        // Not worth an error state: polling just keeps the built-in default.
+        console.error('loading /api/config failed', err)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [refreshIntervalOverrideMs])
 
   function handleThemeChange(next: Theme) {
     setTheme(next)
