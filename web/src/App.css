@@ -299,7 +299,9 @@ body,
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 10px 14px;
-  width: 220px;
+  /* Width comes from the React Flow node (workloadNodeWidth in
+     lib/layout.ts), sized to fit the full name on one line. */
+  width: 100%;
   display: grid;
   gap: 6px;
 }
@@ -535,6 +537,23 @@ body,
    backgrounds and nearly disappears against the dark theme's canvas. */
 .react-flow__edge-path {
   stroke: var(--text-muted);
+}
+
+.namespace-band__header {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 32px;
+  border-radius: 10px 10px 0 0;
+  pointer-events: all;
+  cursor: grab;
+}
+
+.namespace-band__header:hover {
+  background: var(--namespace-band-tint);
+}
+
+.react-flow__node-namespaceBand.dragging .namespace-band__header {
+  cursor: grabbing;
 }
 
 .namespace-band__label {
