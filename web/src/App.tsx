@@ -437,7 +437,10 @@ function App() {
   return (
     <div className="app" data-theme={resolvedTheme} ref={appRef}>
       <header className="app__header">
-        <span className="app__brand">KubeLynx</span>
+        <span className="app__brand">
+          <img className="app__logo" src="/logo.svg" alt="" width={24} height={24} />
+          KubeLynx
+        </span>
         <NamespaceMultiSelect
           namespaces={namespaces}
           allValue={allNamespacesValue}

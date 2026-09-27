@@ -82,8 +82,15 @@ body,
 }
 
 .app__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 600;
   font-size: 16px;
+}
+
+.app__logo {
+  flex: none;
 }
 
 .namespace-multiselect {
