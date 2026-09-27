@@ -5,6 +5,7 @@ import {
   Controls,
   ReactFlow,
   type Edge,
+  type EdgeMarker,
   type Node,
   type NodeChange,
 } from '@xyflow/react'
@@ -54,7 +55,7 @@ const FLOWS_PANEL_RESIZE_STEP = 20
 
 // Fallback used only until the --accent custom property has been read from
 // the DOM once (see accentColor below) — matches the dark theme's default.
-const DEFAULT_ACCENT = '#f2c078'
+const DEFAULT_ACCENT = '#b79cff'
 const UNSELECTED_FLOW_OPACITY = 0.35
 
 const DEFAULT_NAMESPACE = 'default'
@@ -302,7 +303,15 @@ function App() {
     if (!selectedFlowId) return state.edges
     return state.edges.map((edge) =>
       edge.id === selectedFlowId
-        ? { ...edge, selected: true, zIndex: 1, style: { ...edge.style, stroke: accentColor } }
+        ? {
+            ...edge,
+            selected: true,
+            zIndex: 1,
+            style: { ...edge.style, stroke: accentColor },
+            // The arrowhead is a separate SVG marker keyed by color, so it
+            // needs the accent color too or it stays muted.
+            markerEnd: { ...(edge.markerEnd as EdgeMarker), color: accentColor },
+          }
         : { ...edge, selected: false, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
     )
   }, [state, selectedFlowId, accentColor])

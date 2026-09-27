@@ -1,50 +1,121 @@
 import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js'
-import type { Edge, Node } from '@xyflow/react'
+import { MarkerType, type Edge, type Node } from '@xyflow/react'
 import { flowId, type Flow, type Graph, type Workload } from './topology'
 import type { BandArrangement } from './bandArrangement'
 import type { NodePositionMap } from './nodePositions'
+import type { EdgeRoute } from './edgeRoute'
 
 const elk = new ELK()
 
 export const NODE_WIDTH = 220
 export const NODE_HEIGHT = 72
 
-// Must match .workload-node's horizontal padding + border and
-// .workload-node__name's font in App.css, so the measured width fits the
-// full name on one line instead of ellipsizing it.
-const NODE_HORIZONTAL_CHROME = 14 * 2 + 2
+// Workload box geometry. Must match .workload-node and its children in
+// App.css (padding, border, gap, fonts, line heights): each box's size is
+// computed here rather than measured, so ELK, band fitting and the rendered
+// box all agree on it without a measure-then-relayout pass.
+const NODE_PADDING_X = 14
+const NODE_PADDING_Y = 10
+const NODE_BORDER = 1
+const NODE_ROW_GAP = 6
+const NODE_NAME_LINE_HEIGHT = 18
+const NODE_BADGE_HEIGHT = 16
+const NODE_BADGE_PADDING_X = 6
+const NODE_BADGE_GAP = 4
 const NODE_NAME_FONT = '500 13px ui-sans-serif, system-ui, -apple-system, sans-serif'
-// Fallback average glyph width when no canvas is available (e.g. tests).
-const APPROX_CHAR_WIDTH = 7.5
+const NODE_BADGE_FONT = '10px ui-monospace, Menlo, monospace'
+// Fallback average glyph widths when no canvas is available (e.g. tests).
+const APPROX_NAME_CHAR_WIDTH = 7.5
+const APPROX_BADGE_CHAR_WIDTH = 6.1
+// Absorbs sub-pixel font rendering differences between canvas and DOM.
+const TEXT_SLACK = 4
 
 let measureContext: CanvasRenderingContext2D | null | undefined
 
-function measureNameWidth(name: string): number {
+function measureText(text: string, font: string, approxCharWidth: number): number {
   if (measureContext === undefined) {
     measureContext = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null
-    if (measureContext) measureContext.font = NODE_NAME_FONT
   }
-  return measureContext ? measureContext.measureText(name).width : name.length * APPROX_CHAR_WIDTH
+  if (!measureContext) return text.length * approxCharWidth
+  measureContext.font = font
+  return measureContext.measureText(text).width
 }
 
-// Each workload node is as wide as its full name needs (never narrower than
-// NODE_WIDTH), so long Deployment/StatefulSet names show whole. ELK gets the
-// same width, so wide nodes are spaced apart rather than overlapping.
-export function workloadNodeWidth(workload: Workload): number {
-  return Math.max(NODE_WIDTH, Math.ceil(measureNameWidth(workload.name) + NODE_HORIZONTAL_CHROME + 4))
+function badgeRowWidth(labels: string[]): number {
+  if (labels.length === 0) return 0
+  const badges = labels.reduce(
+    (sum, label) => sum + measureText(label, NODE_BADGE_FONT, APPROX_BADGE_CHAR_WIDTH) + NODE_BADGE_PADDING_X * 2,
+    0,
+  )
+  return badges + NODE_BADGE_GAP * (labels.length - 1)
 }
 
-// Traffic-rate-to-stroke-width mapping: log scale so a handful of KB/s and a
-// few MB/s edge don't collapse to visually identical lines.
-const MIN_STROKE = 1
-const MAX_STROKE = 4
+// Each workload box is as wide as its full name or its port-badge row needs
+// (never narrower than NODE_WIDTH), and as tall as the rows it actually has
+// — name, owner-kind badge, port badges. ELK gets the same size, so boxes
+// are spaced apart rather than overlapping.
+export function workloadNodeSize(workload: Workload, ports: string[]): { width: number; height: number } {
+  const chromeX = (NODE_PADDING_X + NODE_BORDER) * 2 + TEXT_SLACK
+  const contentWidth = Math.max(
+    measureText(workload.name, NODE_NAME_FONT, APPROX_NAME_CHAR_WIDTH),
+    badgeRowWidth(ports),
+  )
+  const badgeRows = (workload.ownerKind ? 1 : 0) + (ports.length > 0 ? 1 : 0)
+  return {
+    width: Math.max(NODE_WIDTH, Math.ceil(contentWidth + chromeX)),
+    height: (NODE_PADDING_Y + NODE_BORDER) * 2 + NODE_NAME_LINE_HEIGHT + badgeRows * (NODE_ROW_GAP + NODE_BADGE_HEIGHT),
+  }
+}
 
-// Traffic-rate-to-animation-speed mapping: busier edges pulse faster (a
-// shorter dash-cycle duration) so throughput is visible at a glance, not
-// just inferable from stroke width. Same log scale as edgeStrokeWidth so the
-// two visual cues agree on what counts as "busy".
-const MAX_ANIMATION_DURATION_S = 2
-const MIN_ANIMATION_DURATION_S = 0.3
+// A flow's port is its destination port, so a workload's own (listening)
+// ports are the ones on its inbound flows. Deduplicated per protocol+port,
+// sorted by protocol then port number, with the aggregated "multiple" bucket
+// (issue #38) last.
+export function workloadPorts(graph: Graph): Map<string, string[]> {
+  const byWorkload = new Map<string, Map<string, { protocol: string; port: string }>>()
+  for (const flow of graph.edges) {
+    if (!flow.port) continue
+    const protocol = flow.protocol ?? ''
+    const ports = byWorkload.get(flow.target) ?? new Map()
+    ports.set(`${protocol}|${flow.port}`, { protocol, port: flow.port })
+    byWorkload.set(flow.target, ports)
+  }
+  const result = new Map<string, string[]>()
+  for (const [id, ports] of byWorkload) {
+    const sorted = Array.from(ports.values()).sort((a, b) => {
+      if (a.protocol !== b.protocol) return a.protocol.localeCompare(b.protocol)
+      const an = Number(a.port)
+      const bn = Number(b.port)
+      if (Number.isNaN(an) !== Number.isNaN(bn)) return Number.isNaN(an) ? 1 : -1
+      return Number.isNaN(an) ? a.port.localeCompare(b.port) : an - bn
+    })
+    result.set(id, sorted.map(portLabel))
+  }
+  return result
+}
+
+function workloadSizes(graph: Graph, ports: Map<string, string[]>): Map<string, { width: number; height: number }> {
+  return new Map(graph.nodes.map((n) => [n.id, workloadNodeSize(n, ports.get(n.id) ?? [])]))
+}
+
+function portLabel({ protocol, port }: { protocol: string; port: string }): string {
+  const value = Number.isNaN(Number(port)) ? ` ${port}` : ` :${port}`
+  return `${protocol}${value}`.trim()
+}
+
+// Every flow line has the same weight; traffic volume is conveyed by the
+// moving dots (edgeTrafficDots) instead, so line thickness doesn't compete
+// with the direction arrowhead or the dots for attention.
+const EDGE_STROKE_WIDTH = 1.5
+
+// Traffic-rate-to-live-dots mapping (issue #44): busier edges carry more
+// dots, travelling faster, so a trickle and a firehose look proportionally
+// different, on a log scale (trafficRatio). Durations are per full trip
+// along the edge's path.
+const MIN_TRAFFIC_DOTS = 1
+const MAX_TRAFFIC_DOTS = 4
+const MAX_DOT_DURATION_S = 4
+const MIN_DOT_DURATION_S = 1.2
 
 // Swimlane band layout constants: a namespace with multiple namespaces in
 // view gets stacked, labeled bands rather than one undifferentiated canvas.
@@ -72,32 +143,31 @@ function resolveBandArrangement(
   return stackedHeight > viewportHeight ? 'horizontal' : 'vertical'
 }
 
-// Shared by edgeStrokeWidth and edgeAnimationDuration so both visual cues
-// agree on what counts as "busy" — null when there's no traffic to compare
-// against (maxBytesPerSecond <= 0), leaving each caller to pick its own
-// floor value for that case.
+// Log scale so a handful of KB/s and a few MB/s don't look identical —
+// null when there's no traffic to compare against (maxBytesPerSecond <= 0).
 function trafficRatio(bytesPerSecond: number, maxBytesPerSecond: number): number | null {
   if (maxBytesPerSecond <= 0) return null
   return Math.log1p(bytesPerSecond) / Math.log1p(maxBytesPerSecond)
 }
 
-export function edgeStrokeWidth(bytesPerSecond: number, maxBytesPerSecond: number): number {
-  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond)
-  if (ratio === null) return MIN_STROKE
-  return MIN_STROKE + ratio * (MAX_STROKE - MIN_STROKE)
-}
+export type TrafficDots = { count: number; durationSeconds: number }
 
-export function edgeAnimationDuration(bytesPerSecond: number, maxBytesPerSecond: number): string {
-  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond)
-  if (ratio === null) return `${MAX_ANIMATION_DURATION_S}s`
-  return `${MAX_ANIMATION_DURATION_S - ratio * (MAX_ANIMATION_DURATION_S - MIN_ANIMATION_DURATION_S)}s`
+// null for a zero-traffic edge: it stays a plain static line rather than
+// implying movement that isn't happening (#33).
+export function edgeTrafficDots(bytesPerSecond: number, maxBytesPerSecond: number): TrafficDots | null {
+  if (bytesPerSecond <= 0) return null
+  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond) ?? 0
+  return {
+    count: Math.round(MIN_TRAFFIC_DOTS + ratio * (MAX_TRAFFIC_DOTS - MIN_TRAFFIC_DOTS)),
+    durationSeconds: MAX_DOT_DURATION_S - ratio * (MAX_DOT_DURATION_S - MIN_DOT_DURATION_S),
+  }
 }
 
 export function edgeLabel(flow: Flow): string {
   return [flow.protocol, flow.port ? `:${flow.port}` : undefined].filter(Boolean).join(' ')
 }
 
-export type WorkloadNodeData = { workload: Workload }
+export type WorkloadNodeData = { workload: Workload; ports: string[] }
 export type NamespaceBandData = { namespace: string }
 
 const elkLayoutOptions = {
@@ -111,9 +181,34 @@ const elkLayoutOptions = {
   'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
   'elk.layered.spacing.edgeEdgeBetweenLayers': '24',
   'elk.layered.spacing.edgeNodeBetweenLayers': '24',
+  // Orthogonal is already the layered default; stated explicitly because the
+  // routes it produces are now rendered (issue #39 — see collectRoutes),
+  // not discarded.
+  'elk.edgeRouting': 'ORTHOGONAL',
 }
 
-function buildEdges(graph: Graph): Edge[] {
+// Reads the obstacle-aware edge routes ELK computed alongside node
+// positions, translated by `offset` into the same absolute frame the nodes
+// are placed in. Keyed by flowId — the ELK edge ids are flowIds for this.
+function collectRoutes(layout: ElkNode, offset: { x: number; y: number }, routes: Map<string, EdgeRoute>) {
+  const nodeAt = new Map((layout.children ?? []).map((c) => [c.id, { x: (c.x ?? 0) + offset.x, y: (c.y ?? 0) + offset.y }]))
+  for (const edge of layout.edges ?? []) {
+    const section = edge.sections?.[0]
+    const source = nodeAt.get(edge.sources[0])
+    const target = nodeAt.get(edge.targets[0])
+    if (!section || !source || !target) continue
+    const shift = (p: { x: number; y: number }) => ({ x: p.x + offset.x, y: p.y + offset.y })
+    routes.set(edge.id, {
+      points: [section.startPoint, ...(section.bendPoints ?? []), section.endPoint].map(shift),
+      source,
+      target,
+    })
+  }
+}
+
+// `routes` covers only edges ELK laid out (both endpoints in the same ELK
+// graph); FloatingEdge falls back to its own elbow geometry for the rest.
+function buildEdges(graph: Graph, routes: Map<string, EdgeRoute>): Edge[] {
   const maxBytesPerSecond = graph.edges.reduce((max, e) => Math.max(max, e.bytesPerSecond), 0)
   return graph.edges.map((flow) => ({
     id: flowId(flow),
@@ -125,15 +220,16 @@ function buildEdges(graph: Graph): Edge[] {
     // naturally fans edges apart by angle, instead of routing every edge
     // through the same fixed handle position.
     type: 'floating',
-    // Animated dashes single out edges actually carrying traffic right now;
-    // a zero-byte edge stays a plain static line instead of implying
-    // movement that isn't happening.
-    animated: flow.bytesPerSecond > 0,
-    style: {
-      strokeWidth: edgeStrokeWidth(flow.bytesPerSecond, maxBytesPerSecond),
-      animationDuration: edgeAnimationDuration(flow.bytesPerSecond, maxBytesPerSecond),
+    style: { strokeWidth: EDGE_STROKE_WIDTH },
+    // Arrowhead at the destination end shows source -> destination even for
+    // zero-traffic edges, which have no moving dots to show it.
+    markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--edge-stroke)' },
+    // FloatingEdge renders these as dots moving along the edge's path.
+    data: {
+      flow,
+      trafficDots: edgeTrafficDots(flow.bytesPerSecond, maxBytesPerSecond),
+      route: routes.get(flowId(flow)),
     },
-    data: { flow },
   }))
 }
 
@@ -224,18 +320,22 @@ async function layoutFlat(
   edges: Edge[]
   positions: Map<string, { x: number; y: number }>
 }> {
+  const ports = workloadPorts(graph)
+  const sizes = workloadSizes(graph, ports)
   const elkGraph = {
     id: 'root',
     layoutOptions: elkLayoutOptions,
-    children: graph.nodes.map((n) => ({ id: n.id, width: workloadNodeWidth(n), height: NODE_HEIGHT })),
-    edges: graph.edges.map((e, i) => ({
-      id: `e${i}-${e.source}-${e.target}`,
+    children: graph.nodes.map((n) => ({ id: n.id, ...sizes.get(n.id)! })),
+    edges: graph.edges.map((e) => ({
+      id: flowId(e),
       sources: [e.source],
       targets: [e.target],
     })),
   }
 
   const layout = await elk.layout(elkGraph)
+  const routes = new Map<string, EdgeRoute>()
+  collectRoutes(layout, { x: 0, y: 0 }, routes)
 
   const autoPositions = new Map<string, { x: number; y: number }>()
   for (const child of layout.children ?? []) {
@@ -248,11 +348,11 @@ async function layoutFlat(
     id: workload.id,
     type: 'workload',
     position: positions.get(workload.id) ?? { x: 0, y: 0 },
-    style: { width: workloadNodeWidth(workload) },
-    data: { workload },
+    style: { ...sizes.get(workload.id)! },
+    data: { workload, ports: ports.get(workload.id) ?? [] },
   }))
 
-  return { nodes, edges: buildEdges(graph), positions }
+  return { nodes, edges: buildEdges(graph, routes), positions }
 }
 
 // layoutSwimlanes lays out each namespace's workloads independently, then
@@ -278,6 +378,8 @@ async function layoutSwimlanes(
   positions: Map<string, { x: number; y: number }>
 }> {
   const namespaceLayouts: { namespace: string; layout: ElkNode; width: number; height: number }[] = []
+  const ports = workloadPorts(graph)
+  const sizes = workloadSizes(graph, ports)
 
   for (const namespace of namespaces) {
     const nsNodes = graph.nodes.filter((n) => n.namespace === namespace)
@@ -287,9 +389,9 @@ async function layoutSwimlanes(
     const elkGraph: ElkNode = {
       id: namespace,
       layoutOptions: elkLayoutOptions,
-      children: nsNodes.map((n) => ({ id: n.id, width: workloadNodeWidth(n), height: NODE_HEIGHT })),
-      edges: nsEdges.map((e, i) => ({
-        id: `e${namespace}-${i}-${e.source}-${e.target}`,
+      children: nsNodes.map((n) => ({ id: n.id, ...sizes.get(n.id)! })),
+      edges: nsEdges.map((e) => ({
+        id: flowId(e),
         sources: [e.source],
         targets: [e.target],
       })),
@@ -313,6 +415,7 @@ async function layoutSwimlanes(
   )
 
   const autoPositions = new Map<string, { x: number; y: number }>()
+  const routes = new Map<string, EdgeRoute>()
   const bands: { namespace: string; x: number; y: number; width: number; height: number }[] = []
 
   let offset = 0
@@ -320,6 +423,7 @@ async function layoutSwimlanes(
     const bandX = resolvedArrangement === 'horizontal' ? offset : 0
     const bandY = resolvedArrangement === 'horizontal' ? 0 : offset
 
+    collectRoutes(layout, { x: BAND_PADDING_X + bandX, y: BAND_HEADER_HEIGHT + bandY }, routes)
     for (const child of layout.children ?? []) {
       autoPositions.set(child.id, {
         x: (child.x ?? 0) + BAND_PADDING_X + bandX,
@@ -343,7 +447,7 @@ async function layoutSwimlanes(
         .filter((n) => n.namespace === band.namespace)
         .flatMap((n) => {
           const pos = positions.get(n.id)
-          return pos ? [{ x: pos.x, y: pos.y, width: workloadNodeWidth(n), height: NODE_HEIGHT }] : []
+          return pos ? [{ x: pos.x, y: pos.y, ...sizes.get(n.id)! }] : []
         }),
     )
     if (fit) Object.assign(band, fit)
@@ -369,11 +473,11 @@ async function layoutSwimlanes(
     id: workload.id,
     type: 'workload',
     position: positions.get(workload.id) ?? { x: 0, y: 0 },
-    style: { width: workloadNodeWidth(workload) },
-    data: { workload },
+    style: { ...sizes.get(workload.id)! },
+    data: { workload, ports: ports.get(workload.id) ?? [] },
   }))
 
-  return { nodes: [...bandNodes, ...workloadNodes], edges: buildEdges(graph), positions }
+  return { nodes: [...bandNodes, ...workloadNodes], edges: buildEdges(graph, routes), positions }
 }
 
 type Rect = { x: number; y: number; width: number; height: number }
@@ -399,7 +503,8 @@ function fitBandToMembers(members: Rect[]): Rect | null {
 // the next full layout agree on a band's size.
 function nodeRect(node: Node): Rect {
   const width = typeof node.style?.width === 'number' ? node.style.width : NODE_WIDTH
-  return { x: node.position.x, y: node.position.y, width, height: NODE_HEIGHT }
+  const height = typeof node.style?.height === 'number' ? node.style.height : NODE_HEIGHT
+  return { x: node.position.x, y: node.position.y, width, height }
 }
 
 // Keeps namespace bands and their workloads consistent after React Flow
