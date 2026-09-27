@@ -17,13 +17,16 @@ body,
   --border: #23232f;
   --border-strong: #2a2a38;
   --border-subtle: #1c1c26;
-  --border-selected: #3a3a4c;
+  --border-selected: #4f3f86;
   --surface: #1a1a24;
   --surface-hover: #22222e;
-  --surface-selected: #262636;
+  --surface-selected: #2a2342;
   --surface-deep: #14141c;
-  --accent: #f2c078;
-  --accent-border-muted: #4a3c22;
+  --accent: #b79cff;
+  --accent-border-muted: #43356e;
+  /* Unselected flow lines + arrowheads: a muted purple, so the graph reads
+     as one purple identity with the accented selection. */
+  --edge-stroke: #7d6fae;
   --danger: #f28b82;
   --badge-text: #b3b3c6;
   --namespace-band-tint: rgba(255, 255, 255, 0.02);
@@ -40,13 +43,14 @@ body,
   --border: #dcdce6;
   --border-strong: #cfd0dc;
   --border-subtle: #e6e7ee;
-  --border-selected: #e3b568;
+  --border-selected: #b49cf2;
   --surface: #ffffff;
   --surface-hover: #eef0f5;
-  --surface-selected: #fde9c8;
+  --surface-selected: #ede5ff;
   --surface-deep: #eef0f5;
-  --accent: #a5670f;
-  --accent-border-muted: #e8c079;
+  --accent: #6b3fd4;
+  --accent-border-muted: #c9b8f6;
+  --edge-stroke: #9587c4;
   --danger: #c0392b;
   --badge-text: #55566b;
   --namespace-band-tint: rgba(0, 0, 0, 0.03);
@@ -530,13 +534,11 @@ body,
   grid-row: 2;
 }
 
-/* Default (unselected) flow edges use the same muted-text tone as the rest
-   of the chrome — React Flow's library-default gray reads as far
-   heavier/darker than the thin lines it's meant to be. --border-strong
-   isn't used here: it's calibrated for subtle dividers against surface
-   backgrounds and nearly disappears against the dark theme's canvas. */
+/* Default (unselected) flow edges use a muted purple (--edge-stroke) so
+   they belong to the same palette as the accented selection, rather than
+   React Flow's library-default gray. */
 .react-flow__edge-path {
-  stroke: var(--text-muted);
+  stroke: var(--edge-stroke);
 }
 
 .flow-edge__traffic-dot {

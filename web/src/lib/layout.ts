@@ -129,7 +129,7 @@ function buildEdges(graph: Graph): Edge[] {
     style: { strokeWidth: EDGE_STROKE_WIDTH },
     // Arrowhead at the destination end shows source -> destination even for
     // zero-traffic edges, which have no moving dots to show it.
-    markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--text-muted)' },
+    markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--edge-stroke)' },
     // FloatingEdge renders these as dots moving along the edge's path.
     data: { flow, trafficDots: edgeTrafficDots(flow.bytesPerSecond, maxBytesPerSecond) },
   }))

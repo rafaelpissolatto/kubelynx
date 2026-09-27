@@ -55,7 +55,7 @@ const FLOWS_PANEL_RESIZE_STEP = 20
 
 // Fallback used only until the --accent custom property has been read from
 // the DOM once (see accentColor below) — matches the dark theme's default.
-const DEFAULT_ACCENT = '#f2c078'
+const DEFAULT_ACCENT = '#b79cff'
 const UNSELECTED_FLOW_OPACITY = 0.35
 
 const DEFAULT_NAMESPACE = 'default'
