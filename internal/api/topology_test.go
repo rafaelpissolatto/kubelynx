@@ -56,7 +56,7 @@ func TestTopologyHandler_ReturnsGraphJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=demo-backend", nil)
 	rec := httptest.NewRecorder()
 
-	api.TopologyHandler(prom, topology.DefaultProtocolClasses())(rec, req)
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
@@ -83,7 +83,7 @@ func TestTopologyHandler_DefaultsNamespace(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/topology", nil)
 	rec := httptest.NewRecorder()
 
-	api.TopologyHandler(prom, topology.DefaultProtocolClasses())(rec, req)
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
@@ -96,7 +96,7 @@ func TestTopologyHandler_MultipleNamespaces(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=demo-frontend,demo-backend", nil)
 	rec := httptest.NewRecorder()
 
-	api.TopologyHandler(prom, topology.DefaultProtocolClasses())(rec, req)
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
@@ -113,7 +113,7 @@ func TestTopologyHandler_TooManyNamespaces_Returns400(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace="+strings.Join(namespaces, ","), nil)
 	rec := httptest.NewRecorder()
 
-	api.TopologyHandler(prom, topology.DefaultProtocolClasses())(rec, req)
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
@@ -126,7 +126,7 @@ func TestTopologyHandler_AllNamespaces_NotSubjectToMax(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace="+topology.AllNamespaces, nil)
 	rec := httptest.NewRecorder()
 
-	api.TopologyHandler(prom, topology.DefaultProtocolClasses())(rec, req)
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
@@ -153,7 +153,7 @@ func TestTopologyHandler_ProtocolFilter_PassedThroughToQuery(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=demo-backend&protocol=http", nil)
 	rec := httptest.NewRecorder()
 
-	api.TopologyHandler(prom, topology.DefaultProtocolClasses())(rec, req)
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
@@ -169,7 +169,7 @@ func TestTopologyHandler_InvalidProtocol_Returns400(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=demo-backend&protocol=udp", nil)
 	rec := httptest.NewRecorder()
 
-	api.TopologyHandler(prom, topology.DefaultProtocolClasses())(rec, req)
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
@@ -196,7 +196,7 @@ func TestTopologyHandler_DefaultsProtocolToAll(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=demo-backend", nil)
 	rec := httptest.NewRecorder()
 
-	api.TopologyHandler(prom, topology.DefaultProtocolClasses())(rec, req)
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
@@ -221,7 +221,7 @@ func TestTopologyHandler_PrometheusError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=demo-backend", nil)
 	rec := httptest.NewRecorder()
 
-	api.TopologyHandler(prom, topology.DefaultProtocolClasses())(rec, req)
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
 
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", rec.Code)
