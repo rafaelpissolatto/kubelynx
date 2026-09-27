@@ -1,14 +1,17 @@
 import { useState } from 'react'
 import { BaseEdge, useInternalNode, getSmoothStepPath, type EdgeProps } from '@xyflow/react'
 import { getEdgeParams } from '../lib/floatingEdge'
+import type { TrafficDots } from '../lib/layout'
 
 // Corner radius for the elbow bend — larger than smoothstep's tiny default
 // so turns read as a deliberate curve rather than a sharp right angle.
 const BORDER_RADIUS = 16
 
 // Wide, invisible stroke used only to make hovering easier to trigger —
-// the visible line can be as thin as 1px (see edgeStrokeWidth in lib/layout.ts).
+// the visible line is thin (see EDGE_STROKE_WIDTH in lib/layout.ts).
 const HOVER_HIT_WIDTH = 20
+
+const TRAFFIC_DOT_RADIUS = 3
 
 // Label visibility (issue #37): the PROTOCOL :PORT label only renders while
 // its edge is hovered or selected, instead of always-on.
@@ -24,7 +27,7 @@ const HOVER_HIT_WIDTH = 20
 // at the cost of one extra interaction to read a specific edge's port. The
 // flows table already lists every edge's protocol/port as an always-visible
 // source of truth, so nothing is lost — this only affects the canvas.
-export function FloatingEdge({ id, source, target, markerEnd, style, label, selected }: EdgeProps) {
+export function FloatingEdge({ id, source, target, markerEnd, style, label, selected, data }: EdgeProps) {
   const [hovered, setHovered] = useState(false)
   const sourceNode = useInternalNode(source)
   const targetNode = useInternalNode(target)
@@ -44,6 +47,7 @@ export function FloatingEdge({ id, source, target, markerEnd, style, label, sele
   })
 
   const showLabel = hovered || selected
+  const trafficDots = data?.trafficDots as TrafficDots | null | undefined
 
   return (
     <g onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
@@ -66,6 +70,20 @@ export function FloatingEdge({ id, source, target, markerEnd, style, label, sele
         labelBgBorderRadius={4}
         interactionWidth={0}
       />
+      {/* Live traffic (issue #44): dots travel along the edge's actual path,
+          bends included. A negative `begin` staggers them evenly along the
+          path from the first frame instead of all starting at the source. */}
+      {trafficDots &&
+        Array.from({ length: trafficDots.count }, (_, i) => (
+          <circle key={i} r={TRAFFIC_DOT_RADIUS} className="flow-edge__traffic-dot">
+            <animateMotion
+              dur={`${trafficDots.durationSeconds}s`}
+              begin={`${(-i * trafficDots.durationSeconds) / trafficDots.count}s`}
+              repeatCount="indefinite"
+              path={path}
+            />
+          </circle>
+        ))}
     </g>
   )
 }

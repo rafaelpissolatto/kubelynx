@@ -5,6 +5,7 @@ import {
   Controls,
   ReactFlow,
   type Edge,
+  type EdgeMarker,
   type Node,
   type NodeChange,
 } from '@xyflow/react'
@@ -302,7 +303,15 @@ function App() {
     if (!selectedFlowId) return state.edges
     return state.edges.map((edge) =>
       edge.id === selectedFlowId
-        ? { ...edge, selected: true, zIndex: 1, style: { ...edge.style, stroke: accentColor } }
+        ? {
+            ...edge,
+            selected: true,
+            zIndex: 1,
+            style: { ...edge.style, stroke: accentColor },
+            // The arrowhead is a separate SVG marker keyed by color, so it
+            // needs the accent color too or it stays muted.
+            markerEnd: { ...(edge.markerEnd as EdgeMarker), color: accentColor },
+          }
         : { ...edge, selected: false, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
     )
   }, [state, selectedFlowId, accentColor])

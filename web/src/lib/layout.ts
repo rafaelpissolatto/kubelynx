@@ -1,5 +1,5 @@
 import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js'
-import type { Edge, Node } from '@xyflow/react'
+import { MarkerType, type Edge, type Node } from '@xyflow/react'
 import { flowId, type Flow, type Graph, type Workload } from './topology'
 import type { BandArrangement } from './bandArrangement'
 import type { NodePositionMap } from './nodePositions'
@@ -34,17 +34,19 @@ export function workloadNodeWidth(workload: Workload): number {
   return Math.max(NODE_WIDTH, Math.ceil(measureNameWidth(workload.name) + NODE_HORIZONTAL_CHROME + 4))
 }
 
-// Traffic-rate-to-stroke-width mapping: log scale so a handful of KB/s and a
-// few MB/s edge don't collapse to visually identical lines.
-const MIN_STROKE = 1
-const MAX_STROKE = 4
+// Every flow line has the same weight; traffic volume is conveyed by the
+// moving dots (edgeTrafficDots) instead, so line thickness doesn't compete
+// with the direction arrowhead or the dots for attention.
+const EDGE_STROKE_WIDTH = 1.5
 
-// Traffic-rate-to-animation-speed mapping: busier edges pulse faster (a
-// shorter dash-cycle duration) so throughput is visible at a glance, not
-// just inferable from stroke width. Same log scale as edgeStrokeWidth so the
-// two visual cues agree on what counts as "busy".
-const MAX_ANIMATION_DURATION_S = 2
-const MIN_ANIMATION_DURATION_S = 0.3
+// Traffic-rate-to-live-dots mapping (issue #44): busier edges carry more
+// dots, travelling faster, so a trickle and a firehose look proportionally
+// different, on a log scale (trafficRatio). Durations are per full trip
+// along the edge's path.
+const MIN_TRAFFIC_DOTS = 1
+const MAX_TRAFFIC_DOTS = 4
+const MAX_DOT_DURATION_S = 4
+const MIN_DOT_DURATION_S = 1.2
 
 // Swimlane band layout constants: a namespace with multiple namespaces in
 // view gets stacked, labeled bands rather than one undifferentiated canvas.
@@ -72,25 +74,24 @@ function resolveBandArrangement(
   return stackedHeight > viewportHeight ? 'horizontal' : 'vertical'
 }
 
-// Shared by edgeStrokeWidth and edgeAnimationDuration so both visual cues
-// agree on what counts as "busy" — null when there's no traffic to compare
-// against (maxBytesPerSecond <= 0), leaving each caller to pick its own
-// floor value for that case.
+// Log scale so a handful of KB/s and a few MB/s don't look identical —
+// null when there's no traffic to compare against (maxBytesPerSecond <= 0).
 function trafficRatio(bytesPerSecond: number, maxBytesPerSecond: number): number | null {
   if (maxBytesPerSecond <= 0) return null
   return Math.log1p(bytesPerSecond) / Math.log1p(maxBytesPerSecond)
 }
 
-export function edgeStrokeWidth(bytesPerSecond: number, maxBytesPerSecond: number): number {
-  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond)
-  if (ratio === null) return MIN_STROKE
-  return MIN_STROKE + ratio * (MAX_STROKE - MIN_STROKE)
-}
+export type TrafficDots = { count: number; durationSeconds: number }
 
-export function edgeAnimationDuration(bytesPerSecond: number, maxBytesPerSecond: number): string {
-  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond)
-  if (ratio === null) return `${MAX_ANIMATION_DURATION_S}s`
-  return `${MAX_ANIMATION_DURATION_S - ratio * (MAX_ANIMATION_DURATION_S - MIN_ANIMATION_DURATION_S)}s`
+// null for a zero-traffic edge: it stays a plain static line rather than
+// implying movement that isn't happening (#33).
+export function edgeTrafficDots(bytesPerSecond: number, maxBytesPerSecond: number): TrafficDots | null {
+  if (bytesPerSecond <= 0) return null
+  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond) ?? 0
+  return {
+    count: Math.round(MIN_TRAFFIC_DOTS + ratio * (MAX_TRAFFIC_DOTS - MIN_TRAFFIC_DOTS)),
+    durationSeconds: MAX_DOT_DURATION_S - ratio * (MAX_DOT_DURATION_S - MIN_DOT_DURATION_S),
+  }
 }
 
 export function edgeLabel(flow: Flow): string {
@@ -125,15 +126,12 @@ function buildEdges(graph: Graph): Edge[] {
     // naturally fans edges apart by angle, instead of routing every edge
     // through the same fixed handle position.
     type: 'floating',
-    // Animated dashes single out edges actually carrying traffic right now;
-    // a zero-byte edge stays a plain static line instead of implying
-    // movement that isn't happening.
-    animated: flow.bytesPerSecond > 0,
-    style: {
-      strokeWidth: edgeStrokeWidth(flow.bytesPerSecond, maxBytesPerSecond),
-      animationDuration: edgeAnimationDuration(flow.bytesPerSecond, maxBytesPerSecond),
-    },
-    data: { flow },
+    style: { strokeWidth: EDGE_STROKE_WIDTH },
+    // Arrowhead at the destination end shows source -> destination even for
+    // zero-traffic edges, which have no moving dots to show it.
+    markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--text-muted)' },
+    // FloatingEdge renders these as dots moving along the edge's path.
+    data: { flow, trafficDots: edgeTrafficDots(flow.bytesPerSecond, maxBytesPerSecond) },
   }))
 }
 

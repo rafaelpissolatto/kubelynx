@@ -539,6 +539,17 @@ body,
   stroke: var(--text-muted);
 }
 
+.flow-edge__traffic-dot {
+  fill: var(--accent);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-edge__traffic-dot {
+    display: none;
+  }
+}
+
 .namespace-band__header {
   position: absolute;
   inset: 0 0 auto 0;
