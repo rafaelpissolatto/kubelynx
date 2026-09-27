@@ -84,8 +84,16 @@ Other make targets:
 | --- | --- | --- |
 | `-listen-addr` | `:8080` | Address to serve the API on |
 | `-prometheus-url` | `http://localhost:9090` | Base URL of the Prometheus server to query |
+| `-prometheus-bearer-token-file` | none | File containing a bearer token for Prometheus/Thanos/Mimir, sent as `Authorization: Bearer <token>`. Re-read on every request, so a rotated Secret applies without a restart. Omit for no auth. |
 | `-protocol-ports-file` | built-in defaults | JSON file overriding the HTTP/gRPC port classification, e.g. `{"http":["8081"],"grpc":["50052"]}` |
 | `-tcp-port-allowlist-file` | built-in defaults | JSON file overriding the TCP known-ports allow-list, e.g. `{"tcp":["80","443","8080"]}` |
+
+To query a secured Prometheus locally:
+
+```sh
+echo -n "$TOKEN" > /tmp/prom-token
+go run ./cmd/kubelynx -prometheus-url https://prom.example -prometheus-bearer-token-file /tmp/prom-token
+```
 
 ## Packaging
 
