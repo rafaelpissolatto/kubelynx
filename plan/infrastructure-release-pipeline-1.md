@@ -4,13 +4,13 @@ version: 1
 date_created: 2026-09-27
 last_updated: 2026-09-27
 owner: rafaelpissolatto
-status: 'Planned'
+status: 'In progress'
 tags: [infrastructure, ci, release, github-actions, helm, ghcr]
 ---
 
 # Introduction
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: In progress](https://img.shields.io/badge/status-In%20progress-yellow)
 
 Implements GitHub issue #52 (parent #1, blocked by #10). The repo has no `.github/workflows/`. Issue #10 (`plan/feature-packaging-helm-1.md`) produces a `Dockerfile` and a chart at `charts/kubelynx/`, but nothing builds or publishes them. The chart's default `image.repository: ghcr.io/rafaelpissolatto/kubelynx` points at an image that doesn't exist yet (RISK-004 in that plan).
 
@@ -54,12 +54,12 @@ helm install kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-001 | Create `.github/workflows/ci.yml` with `on: { pull_request: {}, push: { branches: [main] } }`, `permissions: {}` and the GUD-002 concurrency block. Job `go` (`runs-on: ubuntu-latest`, `permissions: { contents: read }`) runs `actions/checkout`, `actions/setup-go` (`go-version-file: go.mod`, `cache: true`), `go vet ./...` and `go test -race ./...`. | | |
-| TASK-002 | In `ci.yml`, job `web` (`contents: read`) runs `actions/checkout`, then `actions/setup-node` (`node-version: 24`, `cache: npm`, `cache-dependency-path: web/package-lock.json`). Then, with `working-directory: web`, it runs `npm ci`, `npm run lint` and `npm run build`. | | |
-| TASK-003 | Create the executable `dev/scripts/check-chart.sh` (`#!/usr/bin/env bash`, `set -euo pipefail`), which implements #10's TEST-004 and TEST-005 as assertions. (1) Run `helm template t charts/kubelynx` and check that its `^kind:` lines, sorted and deduped, equal exactly `kind: Deployment` and `kind: Service`. (2) Check that the same output has no `kind: (ClusterRole\|Role\|ClusterRoleBinding\|RoleBinding\|ServiceAccount)`. (3) Check that `helm template t charts/kubelynx --set prometheus.bearerToken.existingSecret.name=prom-token` contains `--prometheus-bearer-token-file=` and `secretName: prom-token`. (4) Check that `helm template t charts/kubelynx --set prometheus.url=` exits non-zero. (5) Check that `--set refreshInterval=abc` and `--set refreshInterval=30` both exit non-zero, and `--set refreshInterval=1m30s` renders. (6) Check that the output contains no `subPath:` field, because Secret rotation needs a directory mount. Each failure prints `FAIL: <reason>` and exits 1, and success prints `PASS`, matching the output style of `dev/scripts/validate.sh`. | | |
-| TASK-004 | In `Makefile`, change the `lint-chart` target from #10 (TASK-020) to run `helm lint charts/kubelynx && ./dev/scripts/check-chart.sh`. | | |
-| TASK-005 | In `ci.yml`, job `chart` (`contents: read`) runs `actions/checkout`, `azure/setup-helm` (CON-004) and `make lint-chart`. | | |
-| TASK-006 | In `ci.yml`, job `docker` (`contents: read`) runs `actions/checkout`, `docker/setup-buildx-action`, and `docker/build-push-action` with `context: .`, `push: false`, `platforms: linux/amd64`, `cache-from: type=gha,scope=kubelynx` and `cache-to: type=gha,mode=max,scope=kubelynx`. It builds amd64 only in CI to keep PR runs fast, while release builds both platforms. | | |
+| TASK-001 | Create `.github/workflows/ci.yml` with `on: { pull_request: {}, push: { branches: [main] } }`, `permissions: {}` and the GUD-002 concurrency block. Job `go` (`runs-on: ubuntu-latest`, `permissions: { contents: read }`) runs `actions/checkout`, `actions/setup-go` (`go-version-file: go.mod`, `cache: true`), `go vet ./...` and `go test -race ./...`. | ✅ | 2026-09-27 |
+| TASK-002 | In `ci.yml`, job `web` (`contents: read`) runs `actions/checkout`, then `actions/setup-node` (`node-version: 24`, `cache: npm`, `cache-dependency-path: web/package-lock.json`). Then, with `working-directory: web`, it runs `npm ci`, `npm run lint` and `npm run build`. | ✅ | 2026-09-27 |
+| TASK-003 | Create the executable `dev/scripts/check-chart.sh` (`#!/usr/bin/env bash`, `set -euo pipefail`), which implements #10's TEST-004 and TEST-005 as assertions. (1) Run `helm template t charts/kubelynx` and check that its `^kind:` lines, sorted and deduped, equal exactly `kind: Deployment` and `kind: Service`. (2) Check that the same output has no `kind: (ClusterRole\|Role\|ClusterRoleBinding\|RoleBinding\|ServiceAccount)`. (3) Check that `helm template t charts/kubelynx --set prometheus.bearerToken.existingSecret.name=prom-token` contains `--prometheus-bearer-token-file=` and `secretName: prom-token`. (4) Check that `helm template t charts/kubelynx --set prometheus.url=` exits non-zero. (5) Check that `--set refreshInterval=abc` and `--set refreshInterval=30` both exit non-zero, and `--set refreshInterval=1m30s` renders. (6) Check that the output contains no `subPath:` field, because Secret rotation needs a directory mount. Each failure prints `FAIL: <reason>` and exits 1, and success prints `PASS`, matching the output style of `dev/scripts/validate.sh`. | ✅ | 2026-09-27 |
+| TASK-004 | In `Makefile`, change the `lint-chart` target from #10 (TASK-020) to run `helm lint charts/kubelynx && ./dev/scripts/check-chart.sh`. | ✅ | 2026-09-27 |
+| TASK-005 | In `ci.yml`, job `chart` (`contents: read`) runs `actions/checkout`, `azure/setup-helm` (CON-004) and `make lint-chart`. | ✅ | 2026-09-27 |
+| TASK-006 | In `ci.yml`, job `docker` (`contents: read`) runs `actions/checkout`, `docker/setup-buildx-action`, and `docker/build-push-action` with `context: .`, `push: false`, `platforms: linux/amd64`, `cache-from: type=gha,scope=kubelynx` and `cache-to: type=gha,mode=max,scope=kubelynx`. It builds amd64 only in CI to keep PR runs fast, while release builds both platforms. | ✅ | 2026-09-27 |
 
 ### Implementation Phase 2
 
@@ -67,12 +67,12 @@ helm install kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-007 | Create `.github/workflows/release.yml` with `on: { push: { tags: ['v*.*.*'] } }`, `permissions: {}` and the GUD-002 release concurrency block. Add a workflow-level `env: { REGISTRY: ghcr.io/rafaelpissolatto, IMAGE: ghcr.io/rafaelpissolatto/kubelynx }`. | | |
-| TASK-008 | In `release.yml`, job `image` (`permissions: { contents: read, packages: write }`) runs `actions/checkout`, `docker/setup-qemu-action`, `docker/setup-buildx-action`, and `docker/login-action` (`registry: ghcr.io`, `username: ${{ github.actor }}`, `password: ${{ secrets.GITHUB_TOKEN }}`). It then runs `docker/metadata-action` (`images: ${{ env.IMAGE }}`, with the PAT-001 tag rules) and `docker/build-push-action` with `context: .`, `platforms: linux/amd64,linux/arm64`, `push: true`, `tags`/`labels` from the metadata step, and the same gha cache scope as TASK-006. | | |
-| TASK-009 | In `release.yml`, job `chart-publish` (`needs: image`, `permissions: { contents: read, packages: write }`) runs `actions/checkout` and `azure/setup-helm`. It sets `VERSION="${GITHUB_REF_NAME#v}"` into `$GITHUB_ENV`, then runs `helm lint charts/kubelynx`, `helm package charts/kubelynx --version "$VERSION" --app-version "$VERSION" --destination dist/`, `echo "${{ secrets.GITHUB_TOKEN }}" \| helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin`, and `helm push "dist/kubelynx-$VERSION.tgz" oci://ghcr.io/rafaelpissolatto/charts`. Finally, `actions/upload-artifact` uploads `dist/kubelynx-$VERSION.tgz` under the name `chart`. | | |
-| TASK-010 | In `release.yml`, job `github-release` (`needs: chart-publish`, `permissions: { contents: write }`) runs `actions/checkout` and downloads the `chart` artifact with `actions/download-artifact` into `dist/`. It then runs `gh release create "$GITHUB_REF_NAME" dist/*.tgz --verify-tag --generate-notes --title "$GITHUB_REF_NAME" $( [[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease )`, with `env: { GH_TOKEN: ${{ github.token }} }`. | | |
-| TASK-011 | In `README.md`, extend the #10 Install section with the published-artifact path: `helm install kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X.Y.Z --set prometheus.url=...` and `helm show values oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X.Y.Z`. Add one sentence stating that the chart version equals the app/image version. Keep the local `./charts/kubelynx` install for development. | | |
-| TASK-012 | Create `docs/releasing.md` with the release procedure. (1) Merge to `main` with CI green. (2) `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`. (3) Watch `release.yml`. (4) The **first release only** needs a manual step: in GitHub → Packages, set `kubelynx` and `charts/kubelynx` visibility to Public, and under "Manage Actions access" confirm the repo has write access. (5) Verify with TEST-005. For pre-releases, use tags like `v0.2.0-rc.1`. | | |
+| TASK-007 | Create `.github/workflows/release.yml` with `on: { push: { tags: ['v*.*.*'] } }`, `permissions: {}` and the GUD-002 release concurrency block. Add a workflow-level `env: { REGISTRY: ghcr.io/rafaelpissolatto, IMAGE: ghcr.io/rafaelpissolatto/kubelynx }`. | ✅ | 2026-09-27 |
+| TASK-008 | In `release.yml`, job `image` (`permissions: { contents: read, packages: write }`) runs `actions/checkout`, `docker/setup-qemu-action`, `docker/setup-buildx-action`, and `docker/login-action` (`registry: ghcr.io`, `username: ${{ github.actor }}`, `password: ${{ secrets.GITHUB_TOKEN }}`). It then runs `docker/metadata-action` (`images: ${{ env.IMAGE }}`, with the PAT-001 tag rules) and `docker/build-push-action` with `context: .`, `platforms: linux/amd64,linux/arm64`, `push: true`, `tags`/`labels` from the metadata step, and the same gha cache scope as TASK-006. | ✅ | 2026-09-27 |
+| TASK-009 | In `release.yml`, job `chart-publish` (`needs: image`, `permissions: { contents: read, packages: write }`) runs `actions/checkout` and `azure/setup-helm`. It sets `VERSION="${GITHUB_REF_NAME#v}"` into `$GITHUB_ENV`, then runs `helm lint charts/kubelynx`, `helm package charts/kubelynx --version "$VERSION" --app-version "$VERSION" --destination dist/`, `echo "${{ secrets.GITHUB_TOKEN }}" \| helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin`, and `helm push "dist/kubelynx-$VERSION.tgz" oci://ghcr.io/rafaelpissolatto/charts`. Finally, `actions/upload-artifact` uploads `dist/kubelynx-$VERSION.tgz` under the name `chart`. | ✅ | 2026-09-27 |
+| TASK-010 | In `release.yml`, job `github-release` (`needs: chart-publish`, `permissions: { contents: write }`) runs `actions/checkout` and downloads the `chart` artifact with `actions/download-artifact` into `dist/`. It then runs `gh release create "$GITHUB_REF_NAME" dist/*.tgz --verify-tag --generate-notes --title "$GITHUB_REF_NAME" $( [[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease )`, with `env: { GH_TOKEN: ${{ github.token }} }`. | ✅ | 2026-09-27 |
+| TASK-011 | In `README.md`, extend the #10 Install section with the published-artifact path: `helm install kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X.Y.Z --set prometheus.url=...` and `helm show values oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X.Y.Z`. Add one sentence stating that the chart version equals the app/image version. Keep the local `./charts/kubelynx` install for development. | ✅ | 2026-09-27 |
+| TASK-012 | Create `docs/releasing.md` with the release procedure. (1) Merge to `main` with CI green. (2) `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`. (3) Watch `release.yml`. (4) The **first release only** needs a manual step: in GitHub → Packages, set `kubelynx` and `charts/kubelynx` visibility to Public, and under "Manage Actions access" confirm the repo has write access. (5) Verify with TEST-005. For pre-releases, use tags like `v0.2.0-rc.1`. | ✅ | 2026-09-27 |
 
 ### Implementation Phase 3
 
@@ -82,6 +82,16 @@ helm install kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X
 |------|-------------|-----------|------|
 | TASK-013 | After #10 and Phases 1–2 merge to `main`, push the tag `v0.1.0-rc.1` and confirm REQ-003's pre-release rule: `latest` is absent and the Release is marked pre-release. Then push `v0.1.0`. | | |
 | TASK-014 | Human: set both GHCR packages to Public (TASK-012, step 4). Then run TEST-005 and TEST-006 and tick the checkboxes on issue #52. | | |
+
+### Implementation notes
+
+Phases 1–2 are done. Phase 3 needs the maintainer after merge: push the tags and make the GHCR packages public.
+
+- **Action versions:** Actions are pinned to the latest releases as of 2026-09-27: checkout v7.0.1, setup-go v7.0.0, setup-node v7.0.0, upload-artifact v7.0.1, download-artifact v8.0.1, setup-qemu v4.4.0, setup-buildx v4.4.1, login v4.6.0, metadata v6.2.0, build-push v7.4.0 and azure/setup-helm v5.0.1. Helm is pinned to v3.22.0: Helm 4 exists, but v3 matches the maintainer's local toolchain.
+- **PAT-001:** `docker/metadata-action` also sets `flavor: latest=false`. Otherwise its default `latest=auto` would add `latest` on its own, in addition to the explicit rule.
+- **TASK-009:** The registry token and actor are read from the environment (`$REGISTRY_TOKEN`, `$GITHUB_ACTOR`) rather than interpolated into the script. `chart-publish` runs `make lint-chart`, so the `check-chart.sh` assertions also gate releases, not just CI.
+- **TASK-003:** `check-chart.sh` also checks that there is exactly one object of each kind, that `automountServiceAccountToken` is `false`, and that the token flag is absent by default. A render failure prints `FAIL:` too. It was mutation-tested by adding a ServiceAccount template, a `subPath` mount, and a template that doesn't render; each one fails the script.
+- **TASK-012:** `docs/releasing.md` also covers recovering from a release that fails halfway. It advises releasing the next patch version rather than moving a published tag.
 
 ## 3. Alternatives
 

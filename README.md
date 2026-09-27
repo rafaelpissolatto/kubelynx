@@ -102,19 +102,27 @@ go run ./cmd/kubelynx -prometheus-url https://prom.example -prometheus-bearer-to
 
 ## Install
 
-KubeLynx ships as a single container image: the Go backend serves the API and the embedded frontend ([ADR 0001](docs/adr/0001-single-image-packaging.md)). The Helm chart in [`charts/kubelynx`](charts/kubelynx) installs one Deployment and one Service.
+KubeLynx ships as a single container image: the Go backend serves the API and the embedded frontend ([ADR 0001](docs/adr/0001-single-image-packaging.md)). The Helm chart installs one Deployment and one Service. Each release publishes both to GHCR under the same version: chart `X.Y.Z` runs image `ghcr.io/rafaelpissolatto/kubelynx:X.Y.Z`. Pick a version from the [releases page](https://github.com/rafaelpissolatto/kubelynx/releases).
+
+```sh
+helm install kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X.Y.Z \
+  -n kubelynx --create-namespace \
+  --set prometheus.url=http://prometheus-operated.monitoring.svc:9090
+kubectl port-forward -n kubelynx svc/kubelynx 8080:80   # then open http://localhost:8080
+```
+
+To see every setting a version supports, run `helm show values oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X.Y.Z`. To install from a checkout instead, for example to try unreleased changes, point Helm at the local chart. It uses the image matching the chart's `appVersion`, so set `image.tag` if that version isn't published:
 
 ```sh
 helm install kubelynx ./charts/kubelynx -n kubelynx --create-namespace \
   --set prometheus.url=http://prometheus-operated.monitoring.svc:9090
-kubectl port-forward -n kubelynx svc/kubelynx 8080:80   # then open http://localhost:8080
 ```
 
 If your Prometheus (or Thanos/Mimir) needs a bearer token, put it in a Secret and reference it. It's mounted as a file and re-read on every request, so rotating the Secret needs no restart:
 
 ```sh
 kubectl create secret generic prom-token -n kubelynx --from-literal=token=<token>
-helm upgrade kubelynx ./charts/kubelynx -n kubelynx --reuse-values \
+helm upgrade kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X.Y.Z -n kubelynx --reuse-values \
   --set prometheus.bearerToken.existingSecret.name=prom-token
 ```
 
@@ -131,7 +139,7 @@ See [`values.yaml`](charts/kubelynx/values.yaml) for the rest (image, resources,
 
 KubeLynx needs **no Kubernetes RBAC**: it only talks to Prometheus, so the chart creates no ServiceAccount, Role or ClusterRole and mounts no API token into the pod. It also has **no authentication of its own**. Before exposing it beyond the cluster network, put it behind your ingress auth or a NetworkPolicy.
 
-To try a local build in the dev cluster, run `make setup` once, then `make deploy-kubelynx` and `make port-kubelynx`.
+To try a local build in the dev cluster, run `make setup` once, then `make deploy-kubelynx` and `make port-kubelynx`. To cut a release, see [docs/releasing.md](docs/releasing.md).
 
 ## License
 
