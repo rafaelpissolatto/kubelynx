@@ -1,0 +1,13 @@
+# Keep the build context to what the Dockerfile copies: go.mod/go.sum,
+# cmd/, internal/ and web/ (sources only — dist/ is rebuilt in the image).
+.git
+.claude
+.playwright-mcp
+web/node_modules
+web/dist
+mock
+docs
+dev
+plan
+charts
+*.md

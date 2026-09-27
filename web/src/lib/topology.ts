@@ -98,3 +98,19 @@ export async function fetchNamespaces(): Promise<NamespacesResponse> {
   }
   return res.json()
 }
+
+// ConfigResponse mirrors the JSON shape served by /api/config
+// (internal/api.configResponse in the Go backend): settings the operator
+// chose at deploy time (--refresh-interval, i.e. the Helm chart's
+// refreshInterval) that the frontend can't know on its own.
+export interface ConfigResponse {
+  refreshIntervalMs: number
+}
+
+export async function fetchConfig(): Promise<ConfigResponse> {
+  const res = await fetch('/api/config')
+  if (!res.ok) {
+    throw new Error(`GET /api/config failed: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}

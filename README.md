@@ -75,6 +75,10 @@ Other make targets:
 | Target | What it does |
 | --- | --- |
 | `make test` | Checks that Beyla flow metrics are reaching Prometheus |
+| `make image` | Builds the `kubelynx:dev` container image |
+| `make deploy-kubelynx` | Builds the image, loads it into kind and installs the Helm chart into the `kubelynx` namespace |
+| `make port-kubelynx` | Port-forwards the in-cluster KubeLynx to `localhost:8080` |
+| `make lint-chart` | Runs `helm lint` on the chart |
 | `make logs-beyla` | Tails the Beyla logs |
 | `make clean` | Deletes the kind cluster |
 
@@ -84,6 +88,7 @@ Other make targets:
 | --- | --- | --- |
 | `-listen-addr` | `:8080` | Address to serve the API on |
 | `-prometheus-url` | `http://localhost:9090` | Base URL of the Prometheus server to query |
+| `-refresh-interval` | `15s` | How often the UI polls for fresh topology. A `?refreshInterval=<ms>` URL param overrides it per browser tab |
 | `-prometheus-bearer-token-file` | none | File containing a bearer token for Prometheus/Thanos/Mimir, sent as `Authorization: Bearer <token>`. Re-read on every request, so a rotated Secret applies without a restart. Omit for no auth. |
 | `-protocol-ports-file` | built-in defaults | JSON file overriding the HTTP/gRPC port classification, e.g. `{"http":["8081"],"grpc":["50052"]}` |
 | `-tcp-port-allowlist-file` | built-in defaults | JSON file overriding the TCP known-ports allow-list, e.g. `{"tcp":["80","443","8080"]}` |
@@ -95,9 +100,38 @@ echo -n "$TOKEN" > /tmp/prom-token
 go run ./cmd/kubelynx -prometheus-url https://prom.example -prometheus-bearer-token-file /tmp/prom-token
 ```
 
-## Packaging
+## Install
 
-KubeLynx is planned to ship as a single container image, with the Go backend serving the embedded frontend. [ADR 0001](docs/adr/0001-single-image-packaging.md) explains why. The image and Helm chart don't exist yet.
+KubeLynx ships as a single container image: the Go backend serves the API and the embedded frontend ([ADR 0001](docs/adr/0001-single-image-packaging.md)). The Helm chart in [`charts/kubelynx`](charts/kubelynx) installs one Deployment and one Service.
+
+```sh
+helm install kubelynx ./charts/kubelynx -n kubelynx --create-namespace \
+  --set prometheus.url=http://prometheus-operated.monitoring.svc:9090
+kubectl port-forward -n kubelynx svc/kubelynx 8080:80   # then open http://localhost:8080
+```
+
+If your Prometheus (or Thanos/Mimir) needs a bearer token, put it in a Secret and reference it. It's mounted as a file and re-read on every request, so rotating the Secret needs no restart:
+
+```sh
+kubectl create secret generic prom-token -n kubelynx --from-literal=token=<token>
+helm upgrade kubelynx ./charts/kubelynx -n kubelynx --reuse-values \
+  --set prometheus.bearerToken.existingSecret.name=prom-token
+```
+
+Main values:
+
+| Value | Default | Description |
+| --- | --- | --- |
+| `prometheus.url` | `http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090` | Prometheus base URL (required) |
+| `prometheus.bearerToken.existingSecret.name` | `""` | Secret holding a bearer token; empty means no auth |
+| `prometheus.bearerToken.existingSecret.key` | `token` | Key inside that Secret |
+| `refreshInterval` | `15s` | How often the UI polls for fresh topology |
+
+See [`values.yaml`](charts/kubelynx/values.yaml) for the rest (image, resources, security context, scheduling).
+
+KubeLynx needs **no Kubernetes RBAC**: it only talks to Prometheus, so the chart creates no ServiceAccount, Role or ClusterRole and mounts no API token into the pod. It also has **no authentication of its own**. Before exposing it beyond the cluster network, put it behind your ingress auth or a NetworkPolicy.
+
+To try a local build in the dev cluster, run `make setup` once, then `make deploy-kubelynx` and `make port-kubelynx`.
 
 ## License
 

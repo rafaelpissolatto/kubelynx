@@ -1,0 +1,59 @@
+image:
+  repository: ghcr.io/rafaelpissolatto/kubelynx
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+prometheus:
+  # Base URL of the Prometheus (or Thanos/Mimir) HTTP API holding Beyla's
+  # beyla_network_flow_bytes_total metric. Required.
+  url: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+  bearerToken:
+    # Optional. Name of an existing Secret in the release namespace holding a
+    # bearer token for Prometheus. It's mounted as a file and re-read on every
+    # request, so rotating the Secret needs no restart. Leave empty for no auth.
+    #   kubectl create secret generic prom-token --from-literal=token=<token>
+    existingSecret:
+      name: ""
+      key: token
+
+# How often the UI polls for fresh topology (a Go duration, e.g. 15s, 1m).
+refreshInterval: 15s
+
+# Extra flags appended to the kubelynx command line. The chart can't mount
+# extra files yet, so the file-based flags (--protocol-ports-file,
+# --tcp-port-allowlist-file) aren't usable from here; this is an escape hatch
+# for flags added to the binary before the chart learns about them.
+extraArgs: []
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

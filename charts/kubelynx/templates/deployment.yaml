@@ -1,0 +1,96 @@
+{{- $tokenSecret := .Values.prometheus.bearerToken.existingSecret }}
+{{- $refreshInterval := toString .Values.refreshInterval }}
+{{- if not (regexMatch "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$" $refreshInterval) }}
+{{- fail (printf "refreshInterval must be a Go duration such as 15s or 1m30s, got %q" $refreshInterval) }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubelynx.fullname" . }}
+  labels:
+    {{- include "kubelynx.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "kubelynx.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "kubelynx.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      # KubeLynx only talks to Prometheus, never the Kubernetes API: no RBAC,
+      # and no ServiceAccount token mounted into the pod.
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: kubelynx
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --listen-addr=:8080
+            - --prometheus-url={{ required "prometheus.url is required" .Values.prometheus.url }}
+            - --refresh-interval={{ $refreshInterval }}
+            {{- if $tokenSecret.name }}
+            - --prometheus-bearer-token-file=/var/run/secrets/kubelynx/prometheus/token
+            {{- end }}
+            {{- with .Values.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if $tokenSecret.name }}
+          volumeMounts:
+            # The whole directory, never a subPath: kubelet only updates
+            # directory mounts when the Secret rotates.
+            - name: prometheus-token
+              mountPath: /var/run/secrets/kubelynx/prometheus
+              readOnly: true
+          {{- end }}
+      {{- if $tokenSecret.name }}
+      volumes:
+        - name: prometheus-token
+          secret:
+            secretName: {{ $tokenSecret.name }}
+            items:
+              - key: {{ $tokenSecret.key | default "token" }}
+                path: token
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,19 @@
+apiVersion: v2
+name: kubelynx
+description: A lightweight visualization UI that renders in-cluster Kubernetes network traffic from the eBPF network telemetry Grafana Beyla already exports to Prometheus.
+type: application
+# Release builds stamp both from the git tag (helm package --version/--app-version);
+# these are development placeholders.
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/rafaelpissolatto/kubelynx
+sources:
+  - https://github.com/rafaelpissolatto/kubelynx
+keywords:
+  - beyla
+  - ebpf
+  - prometheus
+  - network
+  - topology
+annotations:
+  artifacthub.io/license: Apache-2.0
