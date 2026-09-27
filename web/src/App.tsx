@@ -21,6 +21,7 @@ import { FlowDetailPanel } from './components/FlowDetailPanel'
 import { ThemeToggle } from './components/ThemeToggle'
 import { BandArrangementToggle } from './components/BandArrangementToggle'
 import { PanControls } from './components/PanControls'
+import { FloatingEdge } from './components/FloatingEdge'
 import {
   clampFlowsPanelWidth,
   loadFlowsPanelWidth,
@@ -46,6 +47,7 @@ const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_PROTOCOL: ProtocolFilterValue = 'all'
 const DEFAULT_REFRESH_INTERVAL_MS = 15000
 const nodeTypes = { workload: WorkloadNode, namespaceBand: NamespaceBand }
+const edgeTypes = { floating: FloatingEdge }
 
 // 'unreachable' (a 502 from TopologyHandler: BuildTopology couldn't complete
 // its Prometheus query) and 'invalid' (a 400: the request itself was
@@ -269,8 +271,8 @@ function App() {
     if (!selectedFlowId) return state.edges
     return state.edges.map((edge) =>
       edge.id === selectedFlowId
-        ? { ...edge, zIndex: 1, style: { ...edge.style, stroke: accentColor } }
-        : { ...edge, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
+        ? { ...edge, selected: true, zIndex: 1, style: { ...edge.style, stroke: accentColor } }
+        : { ...edge, selected: false, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
     )
   }, [state, selectedFlowId, accentColor])
 
@@ -396,6 +398,7 @@ function App() {
               nodes={state.nodes}
               edges={renderedEdges}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               fitView
               proOptions={{ hideAttribution: true }}
               onEdgeClick={(_, edge) => toggleSelectedFlow(edge.id)}
