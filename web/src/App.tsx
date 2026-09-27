@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Background, Controls, ReactFlow, type Edge, type Node } from '@xyflow/react'
+import {
+  applyNodeChanges,
+  Background,
+  Controls,
+  ReactFlow,
+  type Edge,
+  type Node,
+  type NodeChange,
+} from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './App.css'
 import {
@@ -11,7 +19,7 @@ import {
   type Graph,
   type ProtocolFilter as ProtocolFilterValue,
 } from './lib/topology'
-import { layoutGraph } from './lib/layout'
+import { layoutGraph, syncNamespaceBands, type NamespaceBandData, type WorkloadNodeData } from './lib/layout'
 import { WorkloadNode } from './components/WorkloadNode'
 import { NamespaceBand } from './components/NamespaceBand'
 import { NamespaceMultiSelect } from './components/NamespaceMultiSelect'
@@ -35,6 +43,12 @@ import {
   saveBandArrangement,
   type BandArrangement,
 } from './lib/bandArrangement'
+import {
+  loadNodePositions,
+  saveNodePositions,
+  clearNodePositions,
+  type NodePositionMap,
+} from './lib/nodePositions'
 
 const FLOWS_PANEL_RESIZE_STEP = 20
 
@@ -61,14 +75,19 @@ type LoadState =
   | { status: 'error'; kind: ErrorKind; message: string }
   | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
 
+function positionsToRecord(positions: Map<string, { x: number; y: number }>): NodePositionMap {
+  return Object.fromEntries(positions)
+}
+
 async function loadTopology(
   namespace: string,
   protocol: ProtocolFilterValue,
   bandArrangement: BandArrangement,
+  knownPositions: NodePositionMap,
 ) {
   const graph = await fetchTopology(namespace, protocol)
-  const { nodes, edges } = await layoutGraph(graph, bandArrangement)
-  return { nodes, edges, graph }
+  const { nodes, edges, positions } = await layoutGraph(graph, bandArrangement, knownPositions)
+  return { nodes, edges, graph, positions }
 }
 
 // Status codes TopologyHandler (internal/api/topology.go) responds with:
@@ -137,6 +156,11 @@ function App() {
   // truth for the accent color.
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT)
   const [bandArrangement, setBandArrangement] = useState<BandArrangement>(loadBandArrangement)
+  // Mirrors what's in localStorage for the current namespace scope (see
+  // lib/nodePositions.ts) — read fresh whenever the namespace scope changes,
+  // then kept in sync by every layout run and every drag so a "Rearrange"
+  // or drag doesn't need to round-trip through storage to take effect.
+  const nodePositionsRef = useRef<NodePositionMap>({})
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -204,10 +228,14 @@ function App() {
     let cancelled = false
     setState({ status: 'loading' })
     setSelectedFlowId(null)
+    nodePositionsRef.current = loadNodePositions(namespaceParam)
 
-    loadTopology(namespaceParam, protocol, bandArrangement)
-      .then((result) => {
-        if (!cancelled) setState({ status: 'ready', ...result })
+    loadTopology(namespaceParam, protocol, bandArrangement, nodePositionsRef.current)
+      .then(({ positions, ...result }) => {
+        if (cancelled) return
+        nodePositionsRef.current = positionsToRecord(positions)
+        saveNodePositions(namespaceParam, nodePositionsRef.current)
+        setState({ status: 'ready', ...result })
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -226,9 +254,12 @@ function App() {
   // (or namespace/protocol/band-arrangement-change-triggered) load.
   const refreshInBackground = useCallback(
     (cancelledRef: { current: boolean }) => {
-      loadTopology(namespaceParam, protocol, bandArrangement)
-        .then((result) => {
-          if (!cancelledRef.current) setState({ status: 'ready', ...result })
+      loadTopology(namespaceParam, protocol, bandArrangement, nodePositionsRef.current)
+        .then(({ positions, ...result }) => {
+          if (cancelledRef.current) return
+          nodePositionsRef.current = positionsToRecord(positions)
+          saveNodePositions(namespaceParam, nodePositionsRef.current)
+          setState({ status: 'ready', ...result })
         })
         .catch((err: unknown) => {
           console.error('background topology refresh failed', err)
@@ -337,6 +368,63 @@ function App() {
     setPaused((p) => !p)
   }
 
+  // Keeps drags smooth (React Flow's own drag interaction needs position
+  // changes reflected back into the controlled `nodes` prop as they
+  // happen), but only the final drop position — via onNodeDragStop below —
+  // gets persisted, so a drag-in-progress doesn't hit storage every frame.
+  // syncNamespaceBands keeps bands and workloads together on every change:
+  // dragging a band moves its workloads, dragging a workload re-fits its band.
+  function handleNodesChange(changes: NodeChange[]) {
+    setState((prev) => {
+      if (prev.status !== 'ready') return prev
+      const nodes = applyNodeChanges(changes, prev.nodes)
+      return { ...prev, nodes: syncNamespaceBands(prev.nodes, nodes) }
+    })
+  }
+
+  // Persists the dropped position immediately (issue #43): it's merged into
+  // the same known-positions map a background refresh reads from, so the
+  // very next poll reuses it instead of running that node back through
+  // auto-layout.
+  // A dropped namespace band persists every workload it carried. `state` may
+  // lag the final drag frame by one render, so members are shifted by the
+  // band's remaining delta rather than read as-is.
+  function handleNodeDragStop(_event: unknown, _node: Node, draggedNodes: Node[]) {
+    const positions: NodePositionMap = {}
+    for (const dragged of draggedNodes) {
+      if (dragged.type !== 'namespaceBand') {
+        positions[dragged.id] = dragged.position
+        continue
+      }
+      if (state.status !== 'ready') continue
+      const namespace = (dragged.data as NamespaceBandData).namespace
+      const staleBand = state.nodes.find((n) => n.id === dragged.id)
+      const dx = dragged.position.x - (staleBand?.position.x ?? dragged.position.x)
+      const dy = dragged.position.y - (staleBand?.position.y ?? dragged.position.y)
+      for (const member of state.nodes) {
+        if (member.type !== 'workload' || (member.data as WorkloadNodeData).workload.namespace !== namespace) continue
+        positions[member.id] = { x: member.position.x + dx, y: member.position.y + dy }
+      }
+    }
+    nodePositionsRef.current = { ...nodePositionsRef.current, ...positions }
+    saveNodePositions(namespaceParam, nodePositionsRef.current)
+  }
+
+  // Discards every persisted position for the current namespace scope and
+  // re-lays-out the graph already in hand from scratch, then persists the
+  // fresh auto-layout as the new baseline so it, in turn, stays stable
+  // across the next refresh.
+  function handleRearrange() {
+    if (state.status !== 'ready') return
+    const graph = state.graph
+    clearNodePositions(namespaceParam)
+    layoutGraph(graph, bandArrangement, {}).then(({ nodes, edges, positions }) => {
+      nodePositionsRef.current = positionsToRecord(positions)
+      saveNodePositions(namespaceParam, nodePositionsRef.current)
+      setState({ status: 'ready', nodes, edges, graph })
+    })
+  }
+
   return (
     <div className="app" data-theme={resolvedTheme} ref={appRef}>
       <header className="app__header">
@@ -350,6 +438,15 @@ function App() {
         />
         <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
         <BandArrangementToggle selected={bandArrangement} onChange={handleBandArrangementChange} />
+        <button
+          type="button"
+          className="app__refresh-toggle"
+          onClick={handleRearrange}
+          disabled={state.status !== 'ready'}
+          title="Discard manually-placed positions and re-run auto-layout"
+        >
+          ⤢ Rearrange
+        </button>
         <button
           type="button"
           className="app__refresh-toggle"
@@ -401,6 +498,8 @@ function App() {
               edgeTypes={edgeTypes}
               fitView
               proOptions={{ hideAttribution: true }}
+              onNodesChange={handleNodesChange}
+              onNodeDragStop={handleNodeDragStop}
               onEdgeClick={(_, edge) => toggleSelectedFlow(edge.id)}
               onPaneClick={() => setSelectedFlowId(null)}
             >
