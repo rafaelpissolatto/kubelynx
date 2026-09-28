@@ -5,7 +5,7 @@
 <h1 align="center">KubeLynx</h1>
 
 <p align="center">
-  A lightweight Kubernetes network topology UI that turns Prometheus metrics and eBPF telemetry into real-time service-to-port traffic flows.
+  A lightweight Kubernetes network topology UI that turns the eBPF flow metrics Grafana Beyla exports to Prometheus into a live workload-to-workload traffic graph.
 </p>
 
 <p align="center">
@@ -39,8 +39,8 @@ Each node in the graph is a **workload**: a Deployment, ReplicaSet, DaemonSet or
 - **Filters.** Pick one or more namespaces, or narrow the graph to HTTP, gRPC or TCP traffic.
 - **Layout.** Choose vertical, horizontal or automatic band arrangement. Dragged positions are remembered; **Rearrange** resets them.
 - **Flows table.** Search flows by source or destination. Selecting one shows the PromQL query behind it.
-- **Pause and resume** live refresh, and switch between **dark, light or system** themes.
-- **Bounded cardinality.** TCP ports outside a known-ports allow-list, and UDP ports other than 53, are grouped into a single `multiple` flow.
+- **Refresh and theme.** Pause and resume live refresh, and switch between dark, light or system themes.
+- **Bounded cardinality.** TCP ports outside a known-ports allowlist, and UDP ports other than 53, are grouped into a single `multiple` flow.
 
 ## Development
 
@@ -91,7 +91,7 @@ Other make targets:
 | `-refresh-interval` | `15s` | How often the UI polls for fresh topology. A `?refreshInterval=<ms>` URL param overrides it per browser tab |
 | `-prometheus-bearer-token-file` | none | File containing a bearer token for Prometheus/Thanos/Mimir, sent as `Authorization: Bearer <token>`. Re-read on every request, so a rotated Secret applies without a restart. Omit for no auth. |
 | `-protocol-ports-file` | built-in defaults | JSON file overriding the HTTP/gRPC port classification, e.g. `{"http":["8081"],"grpc":["50052"]}` |
-| `-tcp-port-allowlist-file` | built-in defaults | JSON file overriding the TCP known-ports allow-list, e.g. `{"tcp":["80","443","8080"]}` |
+| `-tcp-port-allowlist-file` | built-in defaults | JSON file overriding the TCP known-ports allowlist, e.g. `{"tcp":["80","443","8080"]}` |
 
 To query a secured Prometheus locally:
 
