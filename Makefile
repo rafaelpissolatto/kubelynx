@@ -83,6 +83,7 @@ port-kubelynx:
 
 lint-chart:
 	helm lint charts/kubelynx
+	./dev/scripts/check-chart.sh
 
 # --- Validation ---
 test:
