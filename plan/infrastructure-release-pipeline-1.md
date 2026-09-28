@@ -4,13 +4,13 @@ version: 1
 date_created: 2026-09-27
 last_updated: 2026-09-27
 owner: rafaelpissolatto
-status: 'In progress'
+status: 'Completed'
 tags: [infrastructure, ci, release, github-actions, helm, ghcr]
 ---
 
 # Introduction
 
-![Status: In progress](https://img.shields.io/badge/status-In%20progress-yellow)
+![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
 
 Implements GitHub issue #52 (parent #1, blocked by #10). The repo has no `.github/workflows/`. Issue #10 (`plan/feature-packaging-helm-1.md`) produces a `Dockerfile` and a chart at `charts/kubelynx/`, but nothing builds or publishes them. The chart's default `image.repository: ghcr.io/rafaelpissolatto/kubelynx` points at an image that doesn't exist yet (RISK-004 in that plan).
 
@@ -80,18 +80,19 @@ helm install kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-013 | After #10 and Phases 1–2 merge to `main`, push the tag `v0.1.0-rc.1` and confirm REQ-003's pre-release rule: `latest` is absent and the Release is marked pre-release. Then push `v0.1.0`. | | |
-| TASK-014 | Human: set both GHCR packages to Public (TASK-012, step 4). Then run TEST-005 and TEST-006 and tick the checkboxes on issue #52. | | |
+| TASK-013 | After #10 and Phases 1–2 merge to `main`, push the tag `v0.1.0-rc.1` and confirm REQ-003's pre-release rule: `latest` is absent and the Release is marked pre-release. Then push `v0.1.0`. | ✅ | 2026-09-28 |
+| TASK-014 | Human: set both GHCR packages to Public (TASK-012, step 4). Then run TEST-005 and TEST-006 and tick the checkboxes on issue #52. | ✅ | 2026-09-28 |
 
 ### Implementation notes
 
-Phases 1–2 are done. Phase 3 needs the maintainer after merge: push the tags and make the GHCR packages public.
+All three phases are done. `v0.1.0-rc.1` and `v0.1.0` were released from `b428670` on 2026-09-28, and the verification evidence is in the closing comment on #52.
 
 - **Action versions:** Actions are pinned to the latest releases as of 2026-09-27: checkout v7.0.1, setup-go v7.0.0, setup-node v7.0.0, upload-artifact v7.0.1, download-artifact v8.0.1, setup-qemu v4.4.0, setup-buildx v4.4.1, login v4.6.0, metadata v6.2.0, build-push v7.4.0 and azure/setup-helm v5.0.1. Helm is pinned to v3.22.0: Helm 4 exists, but v3 matches the maintainer's local toolchain.
 - **PAT-001:** `docker/metadata-action` also sets `flavor: latest=false`. Otherwise its default `latest=auto` would add `latest` on its own, in addition to the explicit rule.
 - **TASK-009:** The registry token and actor are read from the environment (`$REGISTRY_TOKEN`, `$GITHUB_ACTOR`) rather than interpolated into the script. `chart-publish` runs `make lint-chart`, so the `check-chart.sh` assertions also gate releases, not just CI.
 - **TASK-003:** `check-chart.sh` also checks that there is exactly one object of each kind, that `automountServiceAccountToken` is `false`, and that the token flag is absent by default. A render failure prints `FAIL:` too. It was mutation-tested by adding a ServiceAccount template, a `subPath` mount, and a template that doesn't render; each one fails the script.
 - **TASK-012:** `docs/releasing.md` also covers recovering from a release that fails halfway. It advises releasing the next patch version rather than moving a published tag.
+- **Phase 3:** Right after the first release, both GHCR packages still refused anonymous pulls (`401`) until their visibility change was confirmed. Anonymous checks used empty `DOCKER_CONFIG`/`HELM_REGISTRY_CONFIG` directories, so the maintainer's own logins weren't touched. The stable `v0.1.0` image is a rebuild of the tested rc (a different digest from the same commit). A later release could promote the rc image with `docker buildx imagetools create` instead of rebuilding it.
 
 ## 3. Alternatives
 
