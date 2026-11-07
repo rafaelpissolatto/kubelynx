@@ -143,20 +143,25 @@ function resolveBandArrangement(
   return stackedHeight > viewportHeight ? 'horizontal' : 'vertical'
 }
 
-// Log scale so a handful of KB/s and a few MB/s don't look identical —
-// null when there's no traffic to compare against (maxBytesPerSecond <= 0).
-function trafficRatio(bytesPerSecond: number, maxBytesPerSecond: number): number | null {
-  if (maxBytesPerSecond <= 0) return null
-  return Math.log1p(bytesPerSecond) / Math.log1p(maxBytesPerSecond)
+// Log scale so a handful of a unit and a few thousand don't look identical —
+// null when there's no traffic to compare against (maxRate <= 0). Scales
+// purely on Flow.rate's raw magnitude regardless of Flow.metric (REQ-004):
+// bytes and requests are different units, but this only ever compares an
+// edge's rate against the max rate among edges of the *same* graph response
+// (buildEdges below), so it doesn't need them to be comparable in magnitude
+// — it just needs to not crash or produce NaN when the unit changes.
+function trafficRatio(rate: number, maxRate: number): number | null {
+  if (maxRate <= 0) return null
+  return Math.log1p(rate) / Math.log1p(maxRate)
 }
 
 export type TrafficDots = { count: number; durationSeconds: number }
 
 // null for a zero-traffic edge: it stays a plain static line rather than
 // implying movement that isn't happening (#33).
-export function edgeTrafficDots(bytesPerSecond: number, maxBytesPerSecond: number): TrafficDots | null {
-  if (bytesPerSecond <= 0) return null
-  const ratio = trafficRatio(bytesPerSecond, maxBytesPerSecond) ?? 0
+export function edgeTrafficDots(rate: number, maxRate: number): TrafficDots | null {
+  if (rate <= 0) return null
+  const ratio = trafficRatio(rate, maxRate) ?? 0
   return {
     count: Math.round(MIN_TRAFFIC_DOTS + ratio * (MAX_TRAFFIC_DOTS - MIN_TRAFFIC_DOTS)),
     durationSeconds: MAX_DOT_DURATION_S - ratio * (MAX_DOT_DURATION_S - MIN_DOT_DURATION_S),
@@ -209,7 +214,7 @@ function collectRoutes(layout: ElkNode, offset: { x: number; y: number }, routes
 // `routes` covers only edges ELK laid out (both endpoints in the same ELK
 // graph); FloatingEdge falls back to its own elbow geometry for the rest.
 function buildEdges(graph: Graph, routes: Map<string, EdgeRoute>): Edge[] {
-  const maxBytesPerSecond = graph.edges.reduce((max, e) => Math.max(max, e.bytesPerSecond), 0)
+  const maxRate = graph.edges.reduce((max, e) => Math.max(max, e.rate), 0)
   return graph.edges.map((flow) => ({
     id: flowId(flow),
     source: flow.source,
@@ -227,7 +232,7 @@ function buildEdges(graph: Graph, routes: Map<string, EdgeRoute>): Edge[] {
     // FloatingEdge renders these as dots moving along the edge's path.
     data: {
       flow,
-      trafficDots: edgeTrafficDots(flow.bytesPerSecond, maxBytesPerSecond),
+      trafficDots: edgeTrafficDots(flow.rate, maxRate),
       route: routes.get(flowId(flow)),
     },
   }))

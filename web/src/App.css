@@ -157,6 +157,7 @@ body,
 }
 
 .protocol-filter,
+.source-selector,
 .theme-toggle,
 .band-arrangement-toggle {
   display: flex;
@@ -164,6 +165,7 @@ body,
 }
 
 .protocol-filter__chip,
+.source-selector__chip,
 .theme-toggle__chip,
 .band-arrangement-toggle__chip {
   font-size: 12px;
@@ -176,12 +178,14 @@ body,
 }
 
 .protocol-filter__chip:hover,
+.source-selector__chip:hover,
 .theme-toggle__chip:hover,
 .band-arrangement-toggle__chip:hover {
   background: var(--surface-hover);
 }
 
 .protocol-filter__chip[aria-pressed='true'],
+.source-selector__chip[aria-pressed='true'],
 .theme-toggle__chip[aria-pressed='true'],
 .band-arrangement-toggle__chip[aria-pressed='true'] {
   color: var(--text);

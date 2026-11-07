@@ -15,17 +15,20 @@ import {
   fetchConfig,
   fetchNamespaces,
   fetchProtocols,
+  fetchSources,
   fetchTopology,
   flowId,
   TopologyError,
   type Graph,
   type ProtocolFilter as ProtocolFilterValue,
+  type SourceFilter,
 } from './lib/topology'
 import { layoutGraph, syncNamespaceBands, type NamespaceBandData, type WorkloadNodeData } from './lib/layout'
 import { WorkloadNode } from './components/WorkloadNode'
 import { NamespaceBand } from './components/NamespaceBand'
 import { NamespaceMultiSelect } from './components/NamespaceMultiSelect'
 import { ProtocolFilter } from './components/ProtocolFilter'
+import { SourceSelector } from './components/SourceSelector'
 import { FlowsTable } from './components/FlowsTable'
 import { FlowDetailPanel } from './components/FlowDetailPanel'
 import { ThemeToggle } from './components/ThemeToggle'
@@ -86,10 +89,11 @@ function positionsToRecord(positions: Map<string, { x: number; y: number }>): No
 async function loadTopology(
   namespace: string,
   protocol: ProtocolFilterValue,
+  source: SourceFilter,
   bandArrangement: BandArrangement,
   knownPositions: NodePositionMap,
 ) {
-  const graph = await fetchTopology(namespace, protocol)
+  const graph = await fetchTopology(namespace, protocol, source)
   const { nodes, edges, positions } = await layoutGraph(graph, bandArrangement, knownPositions)
   return { nodes, edges, graph, positions }
 }
@@ -130,6 +134,15 @@ function App() {
   const [protocols, setProtocols] = useState<ProtocolFilterValue[]>([DEFAULT_PROTOCOL])
   const [protocol, setProtocol] = useState<ProtocolFilterValue>(() => {
     return new URLSearchParams(window.location.search).get('protocol') || DEFAULT_PROTOCOL
+  })
+  const [sources, setSources] = useState<SourceFilter[]>([])
+  // Empty until either a ?source= URL override or /api/sources' `default`
+  // field resolves it (see the fetchSources effect below) — unlike protocol,
+  // there's no source value the frontend can assume is always valid before
+  // hearing back from the backend (REQ-001), so this starts unset rather
+  // than guessing "beyla".
+  const [source, setSource] = useState<SourceFilter>(() => {
+    return new URLSearchParams(window.location.search).get('source') || ''
   })
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   // Identifies the flow selected in either the table or the graph — see
@@ -249,6 +262,27 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+
+    fetchSources()
+      .then((res) => {
+        if (cancelled) return
+        setSources(res.sources)
+        // A ?source= URL override (or a selection already in flight) wins
+        // over the backend's default — only fills in the default when
+        // nothing has picked a source yet.
+        setSource((prev) => prev || res.default)
+      })
+      .catch((err: unknown) => {
+        console.error('failed to load sources', err)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const namespaceParam = selectedNamespaces.join(',')
 
   useEffect(() => {
@@ -257,7 +291,7 @@ function App() {
     setSelectedFlowId(null)
     nodePositionsRef.current = loadNodePositions(namespaceParam)
 
-    loadTopology(namespaceParam, protocol, bandArrangement, nodePositionsRef.current)
+    loadTopology(namespaceParam, protocol, source, bandArrangement, nodePositionsRef.current)
       .then(({ positions, ...result }) => {
         if (cancelled) return
         nodePositionsRef.current = positionsToRecord(positions)
@@ -273,7 +307,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [namespaceParam, protocol, bandArrangement])
+  }, [namespaceParam, protocol, source, bandArrangement])
 
   // A failed background refresh doesn't replace the last-rendered graph with
   // an error screen — it just logs and leaves the graph as-is; the
@@ -281,7 +315,7 @@ function App() {
   // (or namespace/protocol/band-arrangement-change-triggered) load.
   const refreshInBackground = useCallback(
     (cancelledRef: { current: boolean }) => {
-      loadTopology(namespaceParam, protocol, bandArrangement, nodePositionsRef.current)
+      loadTopology(namespaceParam, protocol, source, bandArrangement, nodePositionsRef.current)
         .then(({ positions, ...result }) => {
           if (cancelledRef.current) return
           nodePositionsRef.current = positionsToRecord(positions)
@@ -292,7 +326,7 @@ function App() {
           console.error('background topology refresh failed', err)
         })
     },
-    [namespaceParam, protocol, bandArrangement],
+    [namespaceParam, protocol, source, bandArrangement],
   )
 
   // Polls /api/topology on refreshIntervalMs while not paused, updating the
@@ -475,6 +509,7 @@ function App() {
           onChange={setSelectedNamespaces}
         />
         <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
+        <SourceSelector sources={sources} selected={source} onChange={setSource} />
         <BandArrangementToggle selected={bandArrangement} onChange={handleBandArrangementChange} />
         <button
           type="button"
