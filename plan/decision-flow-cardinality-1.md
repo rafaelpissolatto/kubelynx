@@ -4,14 +4,14 @@ version: 1
 date_created: 2026-11-07
 last_updated: 2026-11-07
 owner: rafaelpissolatto
-status: 'Planned'
+status: 'Completed'
 tags: [decision, adr, cardinality, prometheus, backend]
 persona: Senior SRE — Telemetry & Backend
 ---
 
 # Introduction
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
 
 Implements GitHub issue #48 (parent #1; follow-up to #38). Issue #48 itself lays out five candidate options (ports-as-a-flag, inter-zone metrics, collector-side aggregation, namespace-scoped collection, a tunable port filter) with measured cardinality numbers from the dev cluster. This is a decision/ADR task, not a code-first task — the deliverable is `docs/adr/0003-flow-cardinality-profile.md` (next free ADR number; confirm `docs/adr/` hasn't gained 0003 from other work first) plus any follow-up issues the decision implies.
 
