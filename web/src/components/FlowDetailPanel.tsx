@@ -1,5 +1,5 @@
 import type { Flow } from '../lib/topology'
-import { formatBytesPerSecond } from '../lib/format'
+import { formatRate } from '../lib/format'
 
 interface FlowDetailPanelProps {
   flow: Flow | null
@@ -21,7 +21,7 @@ export function FlowDetailPanel({ flow }: FlowDetailPanelProps) {
       </div>
       <div className="flow-detail__meta">
         {[flow.protocol, flow.port].filter(Boolean).join(' · ') || 'unknown protocol/port'} ·{' '}
-        {formatBytesPerSecond(flow.bytesPerSecond)}
+        {formatRate(flow.rate, flow.metric)}
       </div>
       <pre className="flow-detail__query">{flow.query}</pre>
     </div>

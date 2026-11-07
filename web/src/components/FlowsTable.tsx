@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { flowId, type Flow } from '../lib/topology'
-import { formatBytesPerSecond } from '../lib/format'
+import { formatRate } from '../lib/format'
 import { matchesFlowFilter } from '../lib/flowFilter'
 
 interface FlowsTableProps {
@@ -12,7 +12,7 @@ interface FlowsTableProps {
 export function FlowsTable({ flows, selectedId, onSelect }: FlowsTableProps) {
   const [filterText, setFilterText] = useState('')
 
-  // Filtering happens before sorting so it never disturbs the bytes/s
+  // Filtering happens before sorting so it never disturbs the rate
   // descending order among whatever flows still match.
   const filtered = useMemo(
     () => flows.filter((flow) => matchesFlowFilter(flow, filterText)),
@@ -20,11 +20,11 @@ export function FlowsTable({ flows, selectedId, onSelect }: FlowsTableProps) {
   )
   // Sorted on every render rather than once when the graph loads, so a
   // background refresh's updated rates keep the ordering current without
-  // extra state to keep in sync.
-  const sorted = useMemo(
-    () => [...filtered].sort((a, b) => b.bytesPerSecond - a.bytesPerSecond),
-    [filtered],
-  )
+  // extra state to keep in sync. Sorts on the raw rate regardless of metric
+  // (REQ-004) — a graph can mix byte-rate and request-rate flows (e.g. an
+  // Istio source's TCP vs. HTTP/gRPC edges), so this is a within-column
+  // ordering convenience, not a claim that the two units are comparable.
+  const sorted = useMemo(() => [...filtered].sort((a, b) => b.rate - a.rate), [filtered])
 
   if (flows.length === 0) {
     return <p className="flows-table__empty">No flows to show.</p>
@@ -53,7 +53,7 @@ export function FlowsTable({ flows, selectedId, onSelect }: FlowsTableProps) {
             <tr>
               <th className="flows-table__head-cell">Flow</th>
               <th className="flows-table__head-cell">Port</th>
-              <th className="flows-table__head-cell">Bytes/s</th>
+              <th className="flows-table__head-cell">Rate</th>
             </tr>
           </thead>
           <tbody>
@@ -74,7 +74,7 @@ export function FlowsTable({ flows, selectedId, onSelect }: FlowsTableProps) {
                     {flow.source} → {flow.target}
                   </td>
                   <td className="flows-table__cell">{flow.port || '—'}</td>
-                  <td className="flows-table__cell">{formatBytesPerSecond(flow.bytesPerSecond)}</td>
+                  <td className="flows-table__cell">{formatRate(flow.rate, flow.metric)}</td>
                 </tr>
               )
             })}
