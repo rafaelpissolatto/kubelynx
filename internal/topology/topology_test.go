@@ -57,7 +57,7 @@ const fullAttributeResult = `{
 func TestBuildTopology_FullAttributeSeries(t *testing.T) {
 	api := newFakeAPI(t, fullAttributeResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
@@ -76,8 +76,11 @@ func TestBuildTopology_FullAttributeSeries(t *testing.T) {
 	if edge.Port != "8080" {
 		t.Errorf("Port = %q, want 8080", edge.Port)
 	}
-	if edge.BytesPerSecond != 1048576 {
-		t.Errorf("BytesPerSecond = %v, want 1048576", edge.BytesPerSecond)
+	if edge.Rate != 1048576 {
+		t.Errorf("Rate = %v, want 1048576", edge.Rate)
+	}
+	if edge.Metric != topology.MetricBytes {
+		t.Errorf("Metric = %q, want %q", edge.Metric, topology.MetricBytes)
 	}
 	if edge.Query == "" {
 		t.Error("Query is empty, want a PromQL string")
@@ -122,7 +125,7 @@ const partialAttributeResult = `{
 func TestBuildTopology_PartialAttributeSeries_DegradesGracefully(t *testing.T) {
 	api := newFakeAPI(t, partialAttributeResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
@@ -137,8 +140,8 @@ func TestBuildTopology_PartialAttributeSeries_DegradesGracefully(t *testing.T) {
 	if edge.Port != "" {
 		t.Errorf("Port = %q, want empty (missing from series)", edge.Port)
 	}
-	if edge.BytesPerSecond != 512 {
-		t.Errorf("BytesPerSecond = %v, want 512", edge.BytesPerSecond)
+	if edge.Rate != 512 {
+		t.Errorf("Rate = %v, want 512", edge.Rate)
 	}
 
 	if len(graph.Nodes) != 2 {
@@ -162,7 +165,7 @@ const emptyResult = `{
 func TestBuildTopology_EmptyResult(t *testing.T) {
 	api := newFakeAPI(t, emptyResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, []string{"empty-namespace"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"empty-namespace"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
@@ -181,7 +184,7 @@ func TestBuildTopology_PrometheusUnreachable(t *testing.T) {
 	}
 	api := promv1.NewAPI(client)
 
-	_, err = topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	_, err = topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err == nil {
 		t.Fatal("BuildTopology: want error for unreachable Prometheus, got nil")
 	}
@@ -204,7 +207,7 @@ func TestBuildTopology_AllNamespaces_OmitsNamespaceFilter(t *testing.T) {
 	}
 	api := promv1.NewAPI(client)
 
-	if _, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality()); err != nil {
+	if _, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla); err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
@@ -216,7 +219,7 @@ func TestBuildTopology_AllNamespaces_OmitsNamespaceFilter(t *testing.T) {
 func TestBuildTopology_AllNamespaces_ReturnsWorkloadsAcrossNamespaces(t *testing.T) {
 	api := newFakeAPI(t, fullAttributeResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	graph, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
@@ -242,7 +245,7 @@ func TestBuildTopology_MultipleNamespaces_MatchesAny(t *testing.T) {
 	}
 	api := promv1.NewAPI(client)
 
-	if _, err := topology.BuildTopology(context.Background(), api, []string{"demo-frontend", "demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality()); err != nil {
+	if _, err := topology.BuildTopology(context.Background(), api, []string{"demo-frontend", "demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla); err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
@@ -257,7 +260,7 @@ func TestBuildTopology_MultipleNamespaces_MatchesAny(t *testing.T) {
 func TestBuildTopology_MultipleNamespaces_ReturnsWorkloadsFromEither(t *testing.T) {
 	api := newFakeAPI(t, fullAttributeResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-frontend", "demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-frontend", "demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
@@ -283,7 +286,7 @@ func TestBuildTopology_NamespaceWithRegexMetacharacters_IsEscaped(t *testing.T) 
 	}
 	api := promv1.NewAPI(client)
 
-	if _, err := topology.BuildTopology(context.Background(), api, []string{"weird.ns", "another+ns"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality()); err != nil {
+	if _, err := topology.BuildTopology(context.Background(), api, []string{"weird.ns", "another+ns"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla); err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
@@ -313,12 +316,90 @@ func TestBuildTopology_ExcludesResponseDirection(t *testing.T) {
 	}
 	api := promv1.NewAPI(client)
 
-	if _, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality()); err != nil {
+	if _, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla); err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
 	if !strings.Contains(gotQuery, `direction!="response"`) {
 		t.Errorf("query %q does not exclude response-direction series", gotQuery)
+	}
+}
+
+func TestBuildTopology_Istio_ProtocolFilter_ScopesQuery(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol string
+		want     []string
+		notWant  []string
+	}{
+		{"all", topology.ProtocolAll, []string{"istio_requests_total", "istio_tcp_sent_bytes_total", "istio_tcp_received_bytes_total"}, nil},
+		{"http", topology.ProtocolHTTP, []string{`istio_requests_total`, `request_protocol="http"`}, []string{"istio_tcp_sent_bytes_total"}},
+		{"grpc", topology.ProtocolGRPC, []string{`istio_requests_total`, `request_protocol="grpc"`}, []string{"istio_tcp_sent_bytes_total"}},
+		{"tcp", topology.ProtocolTCP, []string{"istio_tcp_sent_bytes_total", "istio_tcp_received_bytes_total"}, []string{"istio_requests_total"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotQuery string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := r.ParseForm(); err != nil {
+					t.Fatalf("parsing form: %v", err)
+				}
+				gotQuery = r.FormValue("query")
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, emptyResult)
+			}))
+			t.Cleanup(srv.Close)
+			client, err := promapi.NewClient(promapi.Config{Address: srv.URL})
+			if err != nil {
+				t.Fatalf("creating prometheus client: %v", err)
+			}
+			api := promv1.NewAPI(client)
+
+			if _, err := topology.BuildTopology(context.Background(), api, []string{"mesh-backend"}, tt.protocol, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceIstio); err != nil {
+				t.Fatalf("BuildTopology: %v", err)
+			}
+
+			for _, want := range tt.want {
+				if !strings.Contains(gotQuery, want) {
+					t.Errorf("query %q does not contain %q", gotQuery, want)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(gotQuery, notWant) {
+					t.Errorf("query %q unexpectedly contains %q", gotQuery, notWant)
+				}
+			}
+			if !strings.Contains(gotQuery, `source_workload_namespace=~"mesh-backend"`) {
+				t.Errorf("query %q does not scope by the requested namespace via source_workload_namespace", gotQuery)
+			}
+		})
+	}
+}
+
+func TestBuildTopology_Istio_AllNamespaces_OmitsNamespaceFilter(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parsing form: %v", err)
+		}
+		gotQuery = r.FormValue("query")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, emptyResult)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := promapi.NewClient(promapi.Config{Address: srv.URL})
+	if err != nil {
+		t.Fatalf("creating prometheus client: %v", err)
+	}
+	api := promv1.NewAPI(client)
+
+	if _, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceIstio); err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+
+	if strings.Contains(gotQuery, "source_workload_namespace=") || strings.Contains(gotQuery, "destination_workload_namespace=") {
+		t.Errorf("query %q filters by namespace, want unfiltered for %q", gotQuery, topology.AllNamespaces)
 	}
 }
 
@@ -354,7 +435,7 @@ func TestBuildTopology_ProtocolFilter_ScopesQuery(t *testing.T) {
 			}
 			api := promv1.NewAPI(client)
 
-			if _, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, tt.protocol, classes, topology.DefaultPortCardinality()); err != nil {
+			if _, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, tt.protocol, classes, topology.DefaultPortCardinality(), topology.SourceBeyla); err != nil {
 				t.Fatalf("BuildTopology: %v", err)
 			}
 
@@ -412,7 +493,7 @@ const duplicateCaptureResult = `{
 func TestBuildTopology_AggregatesDuplicateCapturePoints(t *testing.T) {
 	api := newFakeAPI(t, duplicateCaptureResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
@@ -420,8 +501,8 @@ func TestBuildTopology_AggregatesDuplicateCapturePoints(t *testing.T) {
 	if len(graph.Edges) != 1 {
 		t.Fatalf("want 1 aggregated edge, got %d: %+v", len(graph.Edges), graph.Edges)
 	}
-	if got := graph.Edges[0].BytesPerSecond; got != 150 {
-		t.Errorf("BytesPerSecond = %v, want 150 (100+50 summed across capture points)", got)
+	if got := graph.Edges[0].Rate; got != 150 {
+		t.Errorf("Rate = %v, want 150 (100+50 summed across capture points)", got)
 	}
 
 	var dst topology.Workload
@@ -438,7 +519,7 @@ func TestBuildTopology_AggregatesDuplicateCapturePoints(t *testing.T) {
 func TestBuildTopology_PrometheusErrors(t *testing.T) {
 	api := newFakeAPI(t, `{"status":"error","errorType":"internal","error":"boom"}`, http.StatusInternalServerError)
 
-	_, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	_, err := topology.BuildTopology(context.Background(), api, []string{"demo-backend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err == nil {
 		t.Fatal("BuildTopology: want error for erroring Prometheus, got nil")
 	}
@@ -509,28 +590,28 @@ const portCardinalityResult = `{
 func TestBuildTopology_TCPAllowedPort_KeepsIndividualEdge(t *testing.T) {
 	api := newFakeAPI(t, portCardinalityResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
 	edge := findEdge(t, graph, "TCP", "8080")
-	if edge.BytesPerSecond != 100 {
-		t.Errorf("BytesPerSecond = %v, want 100 (allow-listed port kept unaggregated)", edge.BytesPerSecond)
+	if edge.Rate != 100 {
+		t.Errorf("Rate = %v, want 100 (allow-listed port kept unaggregated)", edge.Rate)
 	}
 }
 
 func TestBuildTopology_TCPDisallowedPorts_AggregateIntoMultiple(t *testing.T) {
 	api := newFakeAPI(t, portCardinalityResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
 	edge := findEdge(t, graph, "TCP", topology.MultiplePorts)
-	if edge.BytesPerSecond != 30 {
-		t.Errorf("BytesPerSecond = %v, want 30 (10+20 summed across non-allow-listed ports)", edge.BytesPerSecond)
+	if edge.Rate != 30 {
+		t.Errorf("Rate = %v, want 30 (10+20 summed across non-allow-listed ports)", edge.Rate)
 	}
 	if edge.Query == "" {
 		t.Error("Query is empty, want a PromQL string scoping to the aggregated ports")
@@ -546,28 +627,28 @@ func TestBuildTopology_TCPDisallowedPorts_AggregateIntoMultiple(t *testing.T) {
 func TestBuildTopology_UDPDNSPort_KeepsIndividualEdge(t *testing.T) {
 	api := newFakeAPI(t, portCardinalityResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
 	edge := findEdge(t, graph, "UDP", "53")
-	if edge.BytesPerSecond != 5 {
-		t.Errorf("BytesPerSecond = %v, want 5 (DNS port kept unaggregated)", edge.BytesPerSecond)
+	if edge.Rate != 5 {
+		t.Errorf("Rate = %v, want 5 (DNS port kept unaggregated)", edge.Rate)
 	}
 }
 
 func TestBuildTopology_UDPNonDNSPorts_AggregateIntoMultiple(t *testing.T) {
 	api := newFakeAPI(t, portCardinalityResult, http.StatusOK)
 
-	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
 	edge := findEdge(t, graph, "UDP", topology.MultiplePorts)
-	if edge.BytesPerSecond != 3 {
-		t.Errorf("BytesPerSecond = %v, want 3 (1+2 summed across non-DNS UDP ports)", edge.BytesPerSecond)
+	if edge.Rate != 3 {
+		t.Errorf("Rate = %v, want 3 (1+2 summed across non-DNS UDP ports)", edge.Rate)
 	}
 
 	for _, e := range graph.Edges {
@@ -581,19 +662,19 @@ func TestBuildTopology_CustomTCPAllowlist_ChangesWhatStaysIndividual(t *testing.
 	api := newFakeAPI(t, portCardinalityResult, http.StatusOK)
 
 	narrowAllowlist := topology.PortCardinality{AllowedTCPPorts: []string{"54001"}}
-	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), narrowAllowlist)
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"demo"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), narrowAllowlist, topology.SourceBeyla)
 	if err != nil {
 		t.Fatalf("BuildTopology: %v", err)
 	}
 
 	edge := findEdge(t, graph, "TCP", "54001")
-	if edge.BytesPerSecond != 10 {
-		t.Errorf("BytesPerSecond = %v, want 10 (port allow-listed by the custom config kept unaggregated)", edge.BytesPerSecond)
+	if edge.Rate != 10 {
+		t.Errorf("Rate = %v, want 10 (port allow-listed by the custom config kept unaggregated)", edge.Rate)
 	}
 
 	multi := findEdge(t, graph, "TCP", topology.MultiplePorts)
-	if multi.BytesPerSecond != 120 {
-		t.Errorf("BytesPerSecond = %v, want 120 (8080+54002 folded in once 8080 is no longer allow-listed)", multi.BytesPerSecond)
+	if multi.Rate != 120 {
+		t.Errorf("Rate = %v, want 120 (8080+54002 folded in once 8080 is no longer allow-listed)", multi.Rate)
 	}
 }
 
@@ -611,4 +692,232 @@ func findEdge(t *testing.T, graph topology.Graph, protocol, port string) topolog
 		t.Fatalf("want exactly 1 edge with protocol %q port %q, got %d: %+v", protocol, port, len(found), graph.Edges)
 	}
 	return found[0]
+}
+
+// Istio label values below (source_workload, source_workload_namespace,
+// destination_workload, destination_workload_namespace, request_protocol)
+// are verified against a real ambient-mode mesh (ztunnel + a waypoint in
+// front of mesh-backend only, no sidecars) — the lab cluster at
+// /home/rafael/local/k8s/openobserve — not assumed from the issue/ADR
+// alone (VERIFY-001, plan/feature-istio-source-1.md). Neither
+// istio_requests_total nor istio_tcp_{sent,received}_bytes_total carries a
+// destination-port label on that mesh.
+
+const istioHTTPResult = `{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": {
+          "__name__": "istio_requests_total",
+          "source_workload": "frontend",
+          "source_workload_namespace": "mesh-frontend",
+          "destination_workload": "backend",
+          "destination_workload_namespace": "mesh-backend",
+          "destination_service_name": "backend",
+          "request_protocol": "http",
+          "response_code": "200"
+        },
+        "value": [1700000000, "12.5"]
+      }
+    ]
+  }
+}`
+
+func TestBuildTopology_Istio_HTTPFlow(t *testing.T) {
+	api := newFakeAPI(t, istioHTTPResult, http.StatusOK)
+
+	graph, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceIstio)
+	if err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+
+	if len(graph.Nodes) != 2 {
+		t.Fatalf("want 2 nodes, got %d: %+v", len(graph.Nodes), graph.Nodes)
+	}
+	if len(graph.Edges) != 1 {
+		t.Fatalf("want 1 edge, got %d: %+v", len(graph.Edges), graph.Edges)
+	}
+
+	edge := graph.Edges[0]
+	if edge.Protocol != "http" {
+		t.Errorf("Protocol = %q, want http", edge.Protocol)
+	}
+	if edge.Port != "" {
+		t.Errorf("Port = %q, want empty (no port label on istio_requests_total)", edge.Port)
+	}
+	if edge.Rate != 12.5 {
+		t.Errorf("Rate = %v, want 12.5", edge.Rate)
+	}
+	if edge.Metric != topology.MetricRequests {
+		t.Errorf("Metric = %q, want %q (HTTP has no standard byte-rate metric in Istio's default telemetry)", edge.Metric, topology.MetricRequests)
+	}
+	if edge.Query == "" {
+		t.Error("Query is empty, want a PromQL string")
+	}
+
+	var srcNode, dstNode topology.Workload
+	for _, n := range graph.Nodes {
+		if n.ID == edge.Source {
+			srcNode = n
+		}
+		if n.ID == edge.Target {
+			dstNode = n
+		}
+	}
+	if srcNode.Name != "frontend" || srcNode.Namespace != "mesh-frontend" {
+		t.Errorf("source node = %+v, want frontend/mesh-frontend", srcNode)
+	}
+	// destination_service_name is deliberately not used for node identity,
+	// per ADR 0002: node identity stays Workload-only.
+	if dstNode.Name != "backend" || dstNode.Namespace != "mesh-backend" {
+		t.Errorf("dest node = %+v, want backend/mesh-backend", dstNode)
+	}
+}
+
+const istioGRPCResult = `{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": {
+          "source_workload": "frontend",
+          "source_workload_namespace": "mesh-frontend",
+          "destination_workload": "backend",
+          "destination_workload_namespace": "mesh-backend",
+          "request_protocol": "grpc",
+          "response_code": "0"
+        },
+        "value": [1700000000, "7"]
+      }
+    ]
+  }
+}`
+
+func TestBuildTopology_Istio_GRPCFlow(t *testing.T) {
+	api := newFakeAPI(t, istioGRPCResult, http.StatusOK)
+
+	graph, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceIstio)
+	if err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+
+	if len(graph.Edges) != 1 {
+		t.Fatalf("want 1 edge, got %d: %+v", len(graph.Edges), graph.Edges)
+	}
+	edge := graph.Edges[0]
+	if edge.Protocol != "grpc" {
+		t.Errorf("Protocol = %q, want grpc", edge.Protocol)
+	}
+	if edge.Metric != topology.MetricRequests {
+		t.Errorf("Metric = %q, want %q", edge.Metric, topology.MetricRequests)
+	}
+	if edge.Rate != 7 {
+		t.Errorf("Rate = %v, want 7", edge.Rate)
+	}
+}
+
+// istioTCPResult mirrors what rate(istio_tcp_sent_bytes_total[...]) +
+// rate(istio_tcp_received_bytes_total[...]) resolves to for one connection
+// once PromQL's vector addition has already merged the two metrics'
+// identically-labeled series into one sample (see istioTCPQuery) — the
+// fake Prometheus here returns the post-addition shape, same as a real one
+// would for this query.
+const istioTCPResult = `{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": {
+          "source_workload": "loadgen",
+          "source_workload_namespace": "mesh-frontend",
+          "destination_workload": "gateway-nginx",
+          "destination_workload_namespace": "nginx-gateway",
+          "request_protocol": "tcp",
+          "response_flags": "-"
+        },
+        "value": [1700000000, "2048"]
+      }
+    ]
+  }
+}`
+
+func TestBuildTopology_Istio_TCPFlow(t *testing.T) {
+	api := newFakeAPI(t, istioTCPResult, http.StatusOK)
+
+	graph, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceIstio)
+	if err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+
+	if len(graph.Edges) != 1 {
+		t.Fatalf("want 1 edge, got %d: %+v", len(graph.Edges), graph.Edges)
+	}
+	edge := graph.Edges[0]
+	if edge.Protocol != "tcp" {
+		t.Errorf("Protocol = %q, want tcp", edge.Protocol)
+	}
+	if edge.Port != "" {
+		t.Errorf("Port = %q, want empty", edge.Port)
+	}
+	if edge.Rate != 2048 {
+		t.Errorf("Rate = %v, want 2048", edge.Rate)
+	}
+	if edge.Metric != topology.MetricBytes {
+		t.Errorf("Metric = %q, want %q (TCP byte counters match Beyla's shape)", edge.Metric, topology.MetricBytes)
+	}
+}
+
+// istioUnresolvedIdentityResult mirrors a real series observed on the lab
+// cluster: ztunnel reports "unknown" for an endpoint it can't resolve
+// (traffic leaving the mesh), not an empty label — this must be treated
+// the same as a missing attribute, not a literal Workload named "unknown".
+const istioUnresolvedIdentityResult = `{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {
+        "metric": {
+          "source_workload": "frontend",
+          "source_workload_namespace": "mesh-frontend",
+          "destination_workload": "unknown",
+          "destination_workload_namespace": "unknown",
+          "request_protocol": "tcp"
+        },
+        "value": [1700000000, "99"]
+      }
+    ]
+  }
+}`
+
+func TestBuildTopology_Istio_UnresolvedDestination_DropsSample(t *testing.T) {
+	api := newFakeAPI(t, istioUnresolvedIdentityResult, http.StatusOK)
+
+	graph, err := topology.BuildTopology(context.Background(), api, []string{topology.AllNamespaces}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceIstio)
+	if err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+
+	if len(graph.Nodes) != 0 {
+		t.Errorf("want 0 nodes (unresolved destination must not render as a node), got %d: %+v", len(graph.Nodes), graph.Nodes)
+	}
+	if len(graph.Edges) != 0 {
+		t.Errorf("want 0 edges, got %d: %+v", len(graph.Edges), graph.Edges)
+	}
+}
+
+func TestBuildTopology_Istio_EmptyResult(t *testing.T) {
+	api := newFakeAPI(t, emptyResult, http.StatusOK)
+
+	graph, err := topology.BuildTopology(context.Background(), api, []string{"mesh-frontend"}, topology.ProtocolAll, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality(), topology.SourceIstio)
+	if err != nil {
+		t.Fatalf("BuildTopology: %v", err)
+	}
+	if len(graph.Nodes) != 0 || len(graph.Edges) != 0 {
+		t.Errorf("want empty graph, got %+v", graph)
+	}
 }

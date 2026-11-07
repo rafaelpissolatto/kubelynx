@@ -206,6 +206,79 @@ func TestTopologyHandler_DefaultsProtocolToAll(t *testing.T) {
 	}
 }
 
+func TestTopologyHandler_SourceFilter_PassedThroughToQuery(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parsing form: %v", err)
+		}
+		gotQuery = r.FormValue("query")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := promapi.NewClient(promapi.Config{Address: srv.URL})
+	if err != nil {
+		t.Fatalf("creating prometheus client: %v", err)
+	}
+	prom := promv1.NewAPI(client)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=mesh-backend&source=istio", nil)
+	rec := httptest.NewRecorder()
+
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(gotQuery, "istio_requests_total") {
+		t.Errorf("query %q was not routed to the Istio source", gotQuery)
+	}
+}
+
+func TestTopologyHandler_InvalidSource_Returns400(t *testing.T) {
+	prom := fakePromAPI(t, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=demo-backend&source=prometheus", nil)
+	rec := httptest.NewRecorder()
+
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTopologyHandler_DefaultsSourceToBeyla(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parsing form: %v", err)
+		}
+		gotQuery = r.FormValue("query")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := promapi.NewClient(promapi.Config{Address: srv.URL})
+	if err != nil {
+		t.Fatalf("creating prometheus client: %v", err)
+	}
+	prom := promv1.NewAPI(client)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=demo-backend", nil)
+	rec := httptest.NewRecorder()
+
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(gotQuery, "beyla_network_flow_bytes_total") {
+		t.Errorf("query %q was not routed to the default Beyla source", gotQuery)
+	}
+}
+
 func TestTopologyHandler_PrometheusError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
