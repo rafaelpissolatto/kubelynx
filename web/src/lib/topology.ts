@@ -8,12 +8,21 @@ export interface Workload {
   ownerKind?: string
 }
 
+// Metric is one of the units a Flow's rate is expressed in: "bytes" is a
+// byte rate (Beyla's flows, and Istio's TCP flows); "requests" is a request
+// rate (Istio's HTTP/gRPC flows, which have no standard byte-rate metric in
+// Istio's default telemetry — see ADR 0002). The frontend never assumes
+// "bytes" — every rate display and edge-thickness calculation keys off
+// whichever Metric the flow actually carries (lib/format.ts's formatRate).
+export type Metric = 'bytes' | 'requests'
+
 export interface Flow {
   source: string
   target: string
   protocol?: string
   port?: string
-  bytesPerSecond: number
+  rate: number
+  metric: Metric
   query: string
 }
 
@@ -55,8 +64,12 @@ export class TopologyError extends Error {
   }
 }
 
-export async function fetchTopology(namespace: string, protocol: ProtocolFilter): Promise<Graph> {
-  const params = new URLSearchParams({ namespace, protocol })
+export async function fetchTopology(
+  namespace: string,
+  protocol: ProtocolFilter,
+  source: SourceFilter,
+): Promise<Graph> {
+  const params = new URLSearchParams({ namespace, protocol, source })
   const res = await fetch(`/api/topology?${params}`)
   if (!res.ok) {
     const body = (await res.text().catch(() => '')).trim()
@@ -75,6 +88,30 @@ export async function fetchProtocols(): Promise<ProtocolsResponse> {
   const res = await fetch('/api/protocols')
   if (!res.ok) {
     throw new Error(`GET /api/protocols failed: ${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}
+
+// SourceFilter is one of the values /api/sources returns and
+// /api/topology?source= accepts (e.g. "beyla" | "istio") — mirrors
+// ProtocolFilter above: the frontend never hardcodes the set itself, since
+// the backend is the only source of truth for which telemetry sources it
+// actually has data for (ADR 0002).
+export type SourceFilter = string
+
+// SourcesResponse mirrors the JSON shape served by /api/sources
+// (internal/api.sourcesResponse in the Go backend, added by issue #60).
+// `default` is the source /api/topology falls back to when the frontend
+// hasn't picked one yet (e.g. no `?source=` override in the URL).
+export interface SourcesResponse {
+  sources: SourceFilter[]
+  default: SourceFilter
+}
+
+export async function fetchSources(): Promise<SourcesResponse> {
+  const res = await fetch('/api/sources')
+  if (!res.ok) {
+    throw new Error(`GET /api/sources failed: ${res.status} ${res.statusText}`)
   }
   return res.json()
 }
