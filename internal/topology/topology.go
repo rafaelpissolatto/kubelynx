@@ -43,26 +43,30 @@ type edgeKey struct {
 	source, target, protocol, port string
 }
 
-// BuildTopology queries Prometheus for beyla_network_flow_bytes_total series
-// (rate over a rolling 1m window) touching any of namespaces — as either
-// source or destination — and assembles them into a Graph of Workload nodes
-// and Flow edges. A series missing non-identity attributes (protocol, port,
-// ...) still produces an edge, just without the missing label. protocol
-// scopes the query to one of ValidProtocols (classes governs how ProtocolHTTP
-// and ProtocolGRPC are recognized; see ProtocolClasses) — ProtocolAll applies
-// no protocol scoping. cardinality bounds per-port detail: ports outside it
-// are folded into a single MultiplePorts edge per (source, target, protocol)
-// pair instead of one edge per port (see PortCardinality and boundedPort) —
-// this keeps ephemeral/dynamic ports from exploding the returned edge count.
-// Callers enforce MaxNamespaces and IsValidProtocol themselves (see
-// internal/api); BuildTopology does not reject an oversized namespaces slice
-// or invalid protocol on its own.
-func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, protocol string, classes ProtocolClasses, cardinality PortCardinality) (Graph, error) {
-	query := buildTopologyQuery(namespaces, protocol, classes)
+// BuildTopology queries Prometheus for the selected source's series (rate
+// over a rolling 1m window) touching any of namespaces — as either endpoint
+// — and assembles them into a Graph of Workload nodes and Flow edges. A
+// series missing non-identity attributes (protocol, port, ...) still
+// produces an edge, just without the missing label. protocol scopes the
+// query to one of ValidProtocols (classes governs how ProtocolHTTP and
+// ProtocolGRPC are recognized for a source that classifies by port; see
+// ProtocolClasses) — ProtocolAll applies no protocol scoping. cardinality
+// bounds per-port detail: ports outside it are folded into a single
+// MultiplePorts edge per (source, target, protocol) pair instead of one
+// edge per port (see PortCardinality and boundedPort) — this keeps
+// ephemeral/dynamic ports from exploding the returned edge count. source
+// selects which querySource (see sourceFor) builds the query and maps
+// samples — "" is treated as SourceBeyla (see SourceBeyla's doc comment).
+// Callers enforce MaxNamespaces, IsValidProtocol, and IsValidSource
+// themselves (see internal/api); BuildTopology does not reject an oversized
+// namespaces slice or an invalid protocol/source on its own.
+func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, protocol string, classes ProtocolClasses, cardinality PortCardinality, source string) (Graph, error) {
+	qs := sourceFor(source)
+	query := qs.buildQuery(namespaces, protocol, classes)
 
 	result, warnings, err := api.Query(ctx, query, time.Now())
 	if err != nil {
-		return Graph{}, fmt.Errorf("querying prometheus for namespaces %v, protocol %q: %w", namespaces, protocol, err)
+		return Graph{}, fmt.Errorf("querying prometheus for namespaces %v, protocol %q, source %q: %w", namespaces, protocol, source, err)
 	}
 	if len(warnings) > 0 {
 		slog.WarnContext(ctx, "prometheus query returned warnings", "namespaces", namespaces, "warnings", warnings)
@@ -70,52 +74,35 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, pro
 
 	vector, ok := result.(model.Vector)
 	if !ok {
-		return Graph{}, fmt.Errorf("unexpected prometheus result type %T for namespaces %v, protocol %q", result, namespaces, protocol)
+		return Graph{}, fmt.Errorf("unexpected prometheus result type %T for namespaces %v, protocol %q, source %q", result, namespaces, protocol, source)
 	}
 
 	nodes := map[string]Workload{}
 	edgeOrder := []edgeKey{}
-	edgeBytes := map[edgeKey]float64{}
+	edgeValues := map[edgeKey]float64{}
+	edgeMetric := map[edgeKey]string{}
 
 	for _, sample := range vector {
-		metric := sample.Metric
-
-		srcName := string(metric["k8s_src_owner_name"])
-		srcNS := string(metric["k8s_src_namespace"])
-		dstName := string(metric["k8s_dst_owner_name"])
-		dstNS := string(metric["k8s_dst_namespace"])
-
-		// Without both endpoints' identity there's no edge to draw.
-		if srcName == "" || srcNS == "" || dstName == "" || dstNS == "" {
+		src, dst, flowProtocol, rawPort, metricKind, ok := qs.mapSample(sample.Metric)
+		if !ok {
+			// Without both endpoints' identity there's no edge to draw.
 			continue
 		}
 
-		srcID := workloadID(srcNS, srcName)
-		dstID := workloadID(dstNS, dstName)
-		mergeWorkload(nodes, Workload{
-			ID:        srcID,
-			Name:      srcName,
-			Namespace: srcNS,
-			OwnerKind: normalizeOwnerKind(string(metric["k8s_src_owner_type"])),
-		})
-		mergeWorkload(nodes, Workload{
-			ID:        dstID,
-			Name:      dstName,
-			Namespace: dstNS,
-			OwnerKind: normalizeOwnerKind(string(metric["k8s_dst_owner_type"])),
-		})
+		mergeWorkload(nodes, src)
+		mergeWorkload(nodes, dst)
 
-		flowProtocol := string(metric["transport"])
 		key := edgeKey{
-			source:   srcID,
-			target:   dstID,
+			source:   src.ID,
+			target:   dst.ID,
 			protocol: flowProtocol,
-			port:     boundedPort(flowProtocol, string(metric["dst_port"]), cardinality),
+			port:     boundedPort(flowProtocol, rawPort, cardinality),
 		}
-		if _, seen := edgeBytes[key]; !seen {
+		if _, seen := edgeValues[key]; !seen {
 			edgeOrder = append(edgeOrder, key)
 		}
-		edgeBytes[key] += float64(sample.Value)
+		edgeValues[key] += float64(sample.Value)
+		edgeMetric[key] = metricKind
 	}
 
 	nodeList := make([]Workload, 0, len(nodes))
@@ -127,12 +114,13 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, pro
 	edges := make([]Flow, 0, len(edgeOrder))
 	for _, key := range edgeOrder {
 		edges = append(edges, Flow{
-			Source:         key.source,
-			Target:         key.target,
-			Protocol:       key.protocol,
-			Port:           key.port,
-			BytesPerSecond: edgeBytes[key],
-			Query:          edgeQuery(nodes[key.source], nodes[key.target], key.protocol, key.port, cardinality),
+			Source:   key.source,
+			Target:   key.target,
+			Protocol: key.protocol,
+			Port:     key.port,
+			Rate:     edgeValues[key],
+			Metric:   edgeMetric[key],
+			Query:    qs.edgeQuery(nodes[key.source], nodes[key.target], key.protocol, key.port, cardinality),
 		})
 	}
 	sort.Slice(edges, func(i, j int) bool {
@@ -143,6 +131,47 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, pro
 	})
 
 	return Graph{Nodes: nodeList, Edges: edges}, nil
+}
+
+// beylaSource is the querySource implementation for SourceBeyla, wrapping
+// the Beyla-specific query construction and label mapping below with zero
+// behavior change from before BuildTopology was generalized to multiple
+// sources (see REQ-003, plan/feature-istio-source-1.md).
+type beylaSource struct{}
+
+func (beylaSource) buildQuery(namespaces []string, protocol string, classes ProtocolClasses) string {
+	return buildTopologyQuery(namespaces, protocol, classes)
+}
+
+func (beylaSource) mapSample(metric model.Metric) (src, dst Workload, protocol, port, metricKind string, ok bool) {
+	srcName := string(metric["k8s_src_owner_name"])
+	srcNS := string(metric["k8s_src_namespace"])
+	dstName := string(metric["k8s_dst_owner_name"])
+	dstNS := string(metric["k8s_dst_namespace"])
+
+	if srcName == "" || srcNS == "" || dstName == "" || dstNS == "" {
+		return Workload{}, Workload{}, "", "", "", false
+	}
+
+	src = Workload{
+		ID:        workloadID(srcNS, srcName),
+		Name:      srcName,
+		Namespace: srcNS,
+		OwnerKind: normalizeOwnerKind(string(metric["k8s_src_owner_type"])),
+	}
+	dst = Workload{
+		ID:        workloadID(dstNS, dstName),
+		Name:      dstName,
+		Namespace: dstNS,
+		OwnerKind: normalizeOwnerKind(string(metric["k8s_dst_owner_type"])),
+	}
+	protocol = string(metric["transport"])
+	port = string(metric["dst_port"])
+	return src, dst, protocol, port, MetricBytes, true
+}
+
+func (beylaSource) edgeQuery(src, dst Workload, protocol, port string, cardinality PortCardinality) string {
+	return edgeQuery(src, dst, protocol, port, cardinality)
 }
 
 // buildTopologyQuery renders the PromQL query for BuildTopology.

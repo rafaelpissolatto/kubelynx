@@ -4,14 +4,14 @@ version: 1
 date_created: 2026-11-07
 last_updated: 2026-11-07
 owner: rafaelpissolatto
-status: 'Planned'
+status: 'Completed'
 tags: [feature, istio, backend, telemetry]
 persona: Senior SRE — Telemetry & Backend
 ---
 
 # Introduction
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
 
 Implements GitHub issue #60 (parent #59). Architecture decision: ADR 0002 (`docs/adr/0002-istio-telemetry-source.md`) — read before starting; this plan doesn't re-derive those decisions, only breaks them into tasks.
 
@@ -71,7 +71,14 @@ Today `internal/topology.BuildTopology` is hard-wired to one metric (`beyla_netw
 
 ## 3. Acceptance Criteria (from issue #60)
 
-- [ ] `go build ./... && go vet ./... && go test ./...` passes.
-- [ ] Beyla behavior unchanged.
-- [ ] `source=istio` against the dev cluster's real mesh produces a non-empty `Graph` with correct `Metric` per flow kind.
-- [ ] `/api/sources` reflects only sources with actual Prometheus data.
+- [x] `go build ./... && go vet ./... && go test ./...` passes.
+- [x] Beyla behavior unchanged.
+- [x] `source=istio` against the dev cluster's real mesh produces a non-empty `Graph` with correct `Metric` per flow kind. Verified by running the generated PromQL directly against the lab cluster's OpenObserve Prometheus-compatible API (promclient doesn't yet support Basic auth, so the full binary wasn't run end-to-end against it — see implementer's note below).
+- [x] `/api/sources` reflects only sources with actual Prometheus data. Verified the underlying `count()` presence queries directly against the lab cluster.
+
+### Implementer's notes (Senior SRE — Telemetry & Backend)
+
+- Label names/shape confirmed against the lab cluster (`/home/rafael/local/k8s/openobserve`), matching this plan's assumptions exactly: `istio_requests_total` carries `source_workload`/`source_workload_namespace`/`destination_workload`/`destination_workload_namespace`/`request_protocol` (values seen: `http`; no `grpc` traffic was live, so gRPC is covered by a canned-response unit test only, not live-verified); `istio_tcp_sent_bytes_total`/`istio_tcp_received_bytes_total` carry the same identity labels plus `request_protocol="tcp"`. No destination-port label exists on any of the three metrics — confirmed, not assumed (VERIFY-001). `destination_service_name` is present but unused for node identity, per ADR 0002.
+- One real-world nuance not previously called out: ztunnel reports the literal string `"unknown"` (not an empty label) for an endpoint it can't resolve — observed on live TCP series for traffic leaving the mesh. `istioSource.mapSample` treats `"unknown"` the same as a missing attribute (no edge drawn), not as a literal Workload.
+- `internal/promclient` still only supports a bearer-token file, not HTTP Basic auth, so the `kubelynx` binary wasn't run end-to-end against the lab's OpenObserve endpoint (which requires Basic auth). Per this plan's ENV-001, that's explicitly not required for issue #60's acceptance criteria. Instead, the exact PromQL `BuildTopology` generates for `source=istio` (all four namespace/protocol combinations) was extracted via a temporary test and run directly against OpenObserve's Prometheus-compatible API with `curl -u`, confirming non-empty, correctly-shaped results. The `/api/sources` presence-detection `count()` queries were verified the same way. Adding Basic-auth support to `internal/promclient` remains open as a small follow-up for true end-to-end manual testing.
+- Everything else in REQ-001 through REQ-007 and TASK-001 through TASK-010 was implemented as specified; no deviation needed raising to the Lead persona.

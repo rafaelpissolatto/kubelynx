@@ -59,6 +59,7 @@ func main() {
 	mux.HandleFunc("/api/topology", api.TopologyHandler(prom, protocolClasses, portCardinality))
 	mux.HandleFunc("/api/namespaces", api.NamespacesHandler(prom))
 	mux.HandleFunc("/api/protocols", api.ProtocolsHandler())
+	mux.HandleFunc("/api/sources", api.SourcesHandler(prom))
 	mux.HandleFunc("/api/config", api.ConfigHandler(*refreshInterval))
 	// Liveness/readiness only: deliberately doesn't touch Prometheus, whose
 	// outages the UI already reports rather than restarting the pod over.
