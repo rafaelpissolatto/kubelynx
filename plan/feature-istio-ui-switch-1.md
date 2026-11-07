@@ -4,7 +4,7 @@ version: 1
 date_created: 2026-11-07
 last_updated: 2026-11-07
 owner: rafaelpissolatto
-status: 'Planned'
+status: 'Completed'
 tags: [feature, istio, frontend, ui]
 persona: Senior SRE — UI & Topology Rendering
 ---
@@ -55,7 +55,19 @@ Implements GitHub issue #61 (parent #59). Depends on #60 / `plan/feature-istio-s
 
 ## 3. Acceptance Criteria (from issue #61)
 
-- [ ] Selector shows only sources `/api/sources` reports, defaults correctly.
-- [ ] Switching source re-queries and re-renders, matching existing filter behavior.
-- [ ] Request-rate vs. byte-rate labels are never swapped.
-- [ ] Verified in a real browser, both themes, golden path + empty state.
+- [x] Selector shows only sources `/api/sources` reports, defaults correctly.
+- [x] Switching source re-queries and re-renders, matching existing filter behavior.
+- [x] Request-rate vs. byte-rate labels are never swapped.
+- [x] Verified in a real browser, both themes, golden path + empty state.
+
+## 4. Phase 3 — Live verification (post-merge)
+
+Done after merging this branch with #60's (now on `main`), against the real lab cluster (`/home/rafael/local/k8s/openobserve`) rather than the mocked contract Phases 1–2 were built against:
+
+- Ran the real `kubelynx` binary against the lab's OpenObserve Prometheus-compatible endpoint (`--prometheus-url` with HTTP Basic-auth credentials embedded in the URL userinfo — Go's `net/http` sends these automatically when `req.URL.User` is set and no `Authorization` header is already present, so no `internal/promclient` change was needed for this).
+- `/api/sources` correctly reported `{"sources":["beyla","istio"],"default":"beyla"}` against live cluster data.
+- Ran the real frontend (`npm run dev`, proxying to the real backend) and drove it with a live browser: Beyla source rendered the mesh namespaces' real Beyla-captured flows (7 workloads/8 flows); switching to Istio correctly re-fetched and re-rendered (6 workloads/6 flows), with the `frontend → backend` HTTP edge showing **"1.7–1.8 req/s"** (live-updating) while every TCP edge (including the ambient waypoint hops) stayed in byte-rate — confirmed in both the flows table and the flow detail panel, which also showed the real `istio_requests_total{...}` PromQL.
+- Checked the empty-state (`?namespace=empty-ns`) under both sources — correct "No workload traffic observed"/"No flows to show" in each case.
+- Checked Light theme — rendering and labels held correctly after the switch.
+- The open question from Phase 1/2 (what `App.tsx` sends as `source` before `/api/sources` resolves) did not cause any visible issue in practice — the UI settles on the backend's `default` quickly enough that no bad request or flicker was observed.
+- Screenshot capture via the chrome-devtools MCP timed out (a CDP protocol issue, not an app issue, matching what Phase 1/2 already noted) — evidence here is from accessibility-tree snapshots, which unambiguously show the correct text content.
