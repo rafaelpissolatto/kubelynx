@@ -31,6 +31,8 @@ import { ProtocolFilter } from './components/ProtocolFilter'
 import { SourceSelector } from './components/SourceSelector'
 import { FlowsTable } from './components/FlowsTable'
 import { FlowDetailPanel } from './components/FlowDetailPanel'
+import { WorkloadPanel } from './components/WorkloadPanel'
+import { touchesWorkload } from './lib/workloadSelection'
 import { ThemeToggle } from './components/ThemeToggle'
 import { BandArrangementToggle } from './components/BandArrangementToggle'
 import { PanControls } from './components/PanControls'
@@ -153,6 +155,13 @@ function App() {
   // Identifies the flow selected in either the table or the graph — see
   // flowId — so the two stay in sync no matter which one triggered it.
   const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null)
+  // The selected Workload node (issue #75), by workload ID — the same ID the
+  // graph's nodes and Flow.source/target use, so it survives a background
+  // refresh (which rebuilds every node object) as long as the workload is
+  // still observed. App owns it rather than React Flow's per-node `selected`
+  // flag; renderedNodes below derives that flag from it. Independent of
+  // selectedFlowId: a workload and one of its flows can be selected at once.
+  const [selectedWorkloadId, setSelectedWorkloadId] = useState<string | null>(null)
   // The backend's --refresh-interval (see the /api/config effect below) sets
   // the default; ?refreshInterval=<ms> overrides it, same convention as
   // ?namespace=.
@@ -302,6 +311,7 @@ function App() {
     let cancelled = false
     setState({ status: 'loading' })
     setSelectedFlowId(null)
+    setSelectedWorkloadId(null)
     nodePositionsRef.current = loadNodePositions(positionScope)
     edgeRoutesRef.current = loadEdgeRoutes(positionScope)
 
@@ -376,9 +386,34 @@ function App() {
   // Highlights the selected flow's edge and dims the rest, so a selection
   // made from the table (which has no notion of edge geometry) is still
   // visible on the graph — and vice versa, via ReactFlow's onEdgeClick below.
+  const selectedWorkload = useMemo(() => {
+    if (state.status !== 'ready' || !selectedWorkloadId) return null
+    return state.graph.nodes.find((workload) => workload.id === selectedWorkloadId) ?? null
+  }, [state, selectedWorkloadId])
+
+  // React Flow's `selected` flag is derived here rather than stored in
+  // state.nodes: a background refresh replaces every node object, and
+  // selection must never feed back into layout or persisted positions — only
+  // the one selected node gets a new object, everything else passes through.
+  const renderedNodes = useMemo(() => {
+    if (state.status !== 'ready') return []
+    if (!selectedWorkloadId) return state.nodes
+    return state.nodes.map((node) => (node.id === selectedWorkloadId ? { ...node, selected: true } : node))
+  }, [state, selectedWorkloadId])
+
   const renderedEdges = useMemo(() => {
     if (state.status !== 'ready') return []
-    if (!selectedFlowId) return state.edges
+    if (!selectedFlowId) {
+      if (!selectedWorkloadId) return state.edges
+      // A selected workload with no flow picked yet: its own flows stay at
+      // full strength and the rest recede, so the panel's lists are easy to
+      // trace on the graph.
+      return state.edges.map((edge) =>
+        edge.source === selectedWorkloadId || edge.target === selectedWorkloadId
+          ? edge
+          : { ...edge, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
+      )
+    }
     return state.edges.map((edge) =>
       edge.id === selectedFlowId
         ? {
@@ -392,11 +427,46 @@ function App() {
           }
         : { ...edge, selected: false, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
     )
-  }, [state, selectedFlowId, accentColor])
+  }, [state, selectedFlowId, selectedWorkloadId, accentColor])
 
   function toggleSelectedFlow(id: string) {
     setSelectedFlowId((prev) => (prev === id ? null : id))
   }
+
+  // The one entry point for selecting a workload — node click, keyboard
+  // (Enter/Space on a focused node), and later #77's search all go through
+  // it. A selected flow survives only if it belongs to the new workload.
+  function selectWorkload(id: string) {
+    setSelectedWorkloadId(id)
+    if (state.status !== 'ready') return
+    setSelectedFlowId((prev) => {
+      if (!prev) return prev
+      const flow = state.graph.edges.find((f) => flowId(f) === prev)
+      return flow && touchesWorkload(flow, id) ? prev : null
+    })
+  }
+
+  const clearSelection = useCallback(() => {
+    setSelectedWorkloadId(null)
+    setSelectedFlowId(null)
+  }, [])
+
+  function handleEdgeClick(_event: unknown, edge: Edge) {
+    toggleSelectedFlow(edge.id)
+    // Clicking a flow elsewhere on the graph leaves the workload's panel;
+    // one of its own flows keeps it open, with the flow detail beneath.
+    if (selectedWorkloadId && edge.source !== selectedWorkloadId && edge.target !== selectedWorkloadId) {
+      setSelectedWorkloadId(null)
+    }
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !event.defaultPrevented) clearSelection()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [clearSelection])
 
   // Conservative by construction: while /api/namespaces hasn't resolved yet
   // (or failed), this stays false, so a zero-node topology result renders as
@@ -461,10 +531,21 @@ function App() {
   // gets persisted, so a drag-in-progress doesn't hit storage every frame.
   // syncNamespaceBands keeps bands and workloads together on every change:
   // dragging a band moves its workloads, dragging a workload re-fits its band.
+  //
+  // Select changes never reach state.nodes: selection lives in
+  // selectedWorkloadId (see renderedNodes). A select:true — from a click
+  // (selectNodesOnDrag is off, so a drag never selects) or Enter/Space on a
+  // focused node — selects that workload; React Flow's select:false
+  // side-effects (pane or edge clicks) are ignored, since onPaneClick,
+  // handleEdgeClick and Escape already decide deselection explicitly.
   function handleNodesChange(changes: NodeChange[]) {
+    const selected = changes.findLast((change) => change.type === 'select' && change.selected)
+    if (selected && selected.type === 'select') selectWorkload(selected.id)
+    const layoutChanges = changes.filter((change) => change.type !== 'select')
+    if (layoutChanges.length === 0) return
     setState((prev) => {
       if (prev.status !== 'ready') return prev
-      const nodes = applyNodeChanges(changes, prev.nodes)
+      const nodes = applyNodeChanges(layoutChanges, prev.nodes)
       return { ...prev, nodes: syncNamespaceBands(prev.nodes, nodes) }
     })
   }
@@ -585,16 +666,17 @@ function App() {
           )}
           {state.status === 'ready' && state.nodes.length > 0 && (
             <ReactFlow
-              nodes={state.nodes}
+              nodes={renderedNodes}
               edges={renderedEdges}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               fitView
               proOptions={{ hideAttribution: true }}
+              selectNodesOnDrag={false}
               onNodesChange={handleNodesChange}
               onNodeDragStop={handleNodeDragStop}
-              onEdgeClick={(_, edge) => toggleSelectedFlow(edge.id)}
-              onPaneClick={() => setSelectedFlowId(null)}
+              onEdgeClick={handleEdgeClick}
+              onPaneClick={clearSelection}
             >
               <Background color="var(--rf-background-dot)" />
               <Controls showInteractive={false} />
@@ -615,11 +697,23 @@ function App() {
           onKeyDown={handleResizeKeyDown}
         />
         <aside className="app__flows-panel" style={{ width: flowsPanelWidth }}>
-          <FlowsTable
-            flows={state.status === 'ready' ? state.graph.edges : []}
-            selectedId={selectedFlowId}
-            onSelect={toggleSelectedFlow}
-          />
+          {selectedWorkloadId ? (
+            <WorkloadPanel
+              workloadId={selectedWorkloadId}
+              workload={selectedWorkload}
+              flows={state.status === 'ready' ? state.graph.edges : []}
+              source={source}
+              selectedFlowId={selectedFlowId}
+              onSelectFlow={toggleSelectedFlow}
+              onClose={() => setSelectedWorkloadId(null)}
+            />
+          ) : (
+            <FlowsTable
+              flows={state.status === 'ready' ? state.graph.edges : []}
+              selectedId={selectedFlowId}
+              onSelect={toggleSelectedFlow}
+            />
+          )}
           <FlowDetailPanel flow={selectedFlow} />
         </aside>
       </div>
