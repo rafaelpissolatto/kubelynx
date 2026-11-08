@@ -49,6 +49,8 @@ import { WorkloadSearch } from './components/WorkloadSearch'
 import { SemanticZoom, ZoomReadout } from './components/ZoomControls'
 import { canvasKeyAction } from './lib/canvasKeys'
 import { FloatingEdge } from './components/FloatingEdge'
+import { SecurityLegend } from './components/SecurityLegend'
+import { graphHasSecurity } from './lib/flowSecurity'
 import {
   clampFlowsPanelWidth,
   loadFlowsPanelWidth,
@@ -558,8 +560,14 @@ function App() {
     })
   }, [state, hiddenFlows, emphasis, selectedFlowId, accentColor])
 
-  const { edgeLabels, trafficAnimation } = displayOptions
-  const edgeDisplay = useMemo(() => ({ edgeLabels, trafficAnimation }), [edgeLabels, trafficAnimation])
+  const { edgeLabels, trafficAnimation, highlightPlaintext } = displayOptions
+  const edgeDisplay = useMemo(
+    () => ({ edgeLabels, trafficAnimation, highlightPlaintext }),
+    [edgeLabels, trafficAnimation, highlightPlaintext],
+  )
+  // The mTLS legend (issue #90) appears only when some flow carries
+  // Flow.security — i.e. never for Beyla.
+  const showSecurityLegend = state.status === 'ready' && graphHasSecurity(state.graph.edges)
 
   const searchCurrentIndex = searchCursor ? (emphasis?.matches.indexOf(searchCursor) ?? -1) : -1
 
@@ -953,6 +961,7 @@ function App() {
                     ariaLabel="Minimap"
                   />
                 )}
+                {showSecurityLegend && <SecurityLegend highlightPlaintext={highlightPlaintext} />}
               </ReactFlow>
             </EdgeDisplayContext.Provider>
           )}
@@ -988,6 +997,7 @@ function App() {
               hiddenIds={hiddenFlows}
               selectedId={selectedFlowId}
               onSelect={toggleSelectedFlow}
+              source={source}
             />
           )}
           <FlowDetailPanel flow={selectedFlow} />

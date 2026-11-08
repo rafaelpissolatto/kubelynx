@@ -16,6 +16,11 @@ export interface Workload {
 // whichever Metric the flow actually carries (lib/format.ts's formatRate).
 export type Metric = 'bytes' | 'requests'
 
+// FlowSecurity is a Flow's mTLS status (issue #90), from Istio's
+// connection_security_policy label — see CONTEXT.md's "Flow security" entry
+// and ADR 0002's "Amendment: per-Flow mTLS status" for the contract.
+export type FlowSecurity = 'mutual_tls' | 'none' | 'mixed' | 'unknown'
+
 export interface Flow {
   source: string
   target: string
@@ -24,6 +29,12 @@ export interface Flow {
   rate: number
   metric: Metric
   query: string
+  // Present only for source=istio; absent (not 'unknown') for Beyla, which
+  // can't observe mTLS. lib/flowSecurity.ts turns it into labels and styles.
+  security?: FlowSecurity
+  // 0..1 share of the rate that was mutual_tls; present only when
+  // security === 'mixed'.
+  mtlsRatio?: number
 }
 
 export interface Graph {

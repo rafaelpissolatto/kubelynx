@@ -58,8 +58,15 @@ const onOffText = (on: boolean) => (on ? 'On' : 'Off')
 const showHideText = (show: boolean) => (show ? 'Show' : 'Hide')
 
 // How the graph is drawn (issue #76): edge labels, traffic animation,
-// low-traffic edges, namespace bands, and the minimap (#81). Built on HeaderMenu exactly like
-// SettingsMenu; App.tsx persists every change.
+// low-traffic edges, namespace bands, the minimap (#81), and the plaintext
+// edge highlight (#90). Built on HeaderMenu exactly like SettingsMenu;
+// App.tsx persists every change.
+//
+// Like every other option here, "Highlight plaintext edges" is always
+// shown, whatever the current graph holds (the low-traffic cutoff doesn't
+// hide itself on a tiny graph either): the menu is a stable set of
+// preferences that persist across source switches, and the hint says it
+// only affects Istio flows.
 export function DisplayMenu({ options, onChange }: DisplayMenuProps) {
   const set = <K extends keyof DisplayOptions>(key: K, value: DisplayOptions[K]) =>
     onChange({ ...options, [key]: value })
@@ -112,6 +119,18 @@ export function DisplayMenu({ options, onChange }: DisplayMenuProps) {
           selected={options.minimap}
           text={showHideText}
           onChange={(show) => set('minimap', show)}
+        />
+      </HeaderMenuSection>
+      <HeaderMenuSection
+        title="Highlight plaintext edges"
+        hint="Istio only: dashed for plaintext, dash-dot for mixed. The mTLS lock stays either way."
+      >
+        <Choice
+          label="Highlight plaintext edges"
+          choices={ON_OFF}
+          selected={options.highlightPlaintext}
+          text={onOffText}
+          onChange={(on) => set('highlightPlaintext', on)}
         />
       </HeaderMenuSection>
     </HeaderMenu>
