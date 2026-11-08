@@ -3,7 +3,7 @@ import { MarkerType, type Edge, type Node } from '@xyflow/react'
 import { flowId, type Flow, type Graph, type Workload } from './topology'
 import type { BandArrangement } from './bandArrangement'
 import type { NodePositionMap } from './nodePositions'
-import type { EdgeRoute } from './edgeRoute'
+import { chooseRoute, type EdgeRoute, type Rect } from './edgeRoute'
 
 const elk = new ELK()
 
@@ -211,8 +211,55 @@ function collectRoutes(layout: ElkNode, offset: { x: number; y: number }, routes
   }
 }
 
-// `routes` covers only edges ELK laid out (both endpoints in the same ELK
-// graph); FloatingEdge falls back to its own elbow geometry for the rest.
+// Picks the one route each edge is drawn with, given every workload's final
+// (reconciled) position. Candidates, in order of preference: the route ELK
+// just computed, then the route this edge was drawn with last time
+// (`knownRoutes`). The second matters because persisted positions (#43)
+// outlive the layout they came from: once a refresh's topology differs (a
+// new flow, a new port badge resizing a box, a protocol or source switch),
+// ELK's fresh layout no longer matches where the nodes actually are, so its
+// fresh routes stop connecting them — while the previous route, computed
+// back when those positions *were* ELK's, still does. Without it, routing
+// silently degraded to the floating elbow on the first topology change.
+// A candidate also has to stay clear of every other workload box at its
+// final position (chooseRoute). Only edges ELK laid out (both endpoints in
+// the same ELK graph) ever have a candidate; FloatingEdge falls back to its
+// own elbow geometry for the rest.
+function selectRoutes(
+  graph: Graph,
+  freshRoutes: Map<string, EdgeRoute>,
+  knownRoutes: Map<string, EdgeRoute>,
+  positions: Map<string, { x: number; y: number }>,
+  sizes: Map<string, { width: number; height: number }>,
+): Map<string, EdgeRoute> {
+  const rects: [string, Rect][] = []
+  for (const [id, pos] of positions) {
+    const size = sizes.get(id)
+    if (size) rects.push([id, { ...pos, ...size }])
+  }
+  const selected = new Map<string, EdgeRoute>()
+  for (const flow of graph.edges) {
+    const id = flowId(flow)
+    const candidates = [freshRoutes.get(id), knownRoutes.get(id)].filter((r): r is EdgeRoute => !!r)
+    const source = positions.get(flow.source)
+    const target = positions.get(flow.target)
+    if (candidates.length === 0 || !source || !target) continue
+    const obstacles = rects.flatMap(([nodeId, rect]) =>
+      nodeId === flow.source || nodeId === flow.target ? [] : [rect],
+    )
+    const chosen = chooseRoute(candidates, source, target, obstacles)
+    if (chosen) selected.set(id, candidates[chosen.index])
+  }
+  // Edges outside this graph (hidden by the protocol filter, or briefly
+  // without traffic) keep their known route for when they come back; it's
+  // re-validated then like any other candidate.
+  const inGraph = new Set(graph.edges.map(flowId))
+  for (const [id, route] of knownRoutes) {
+    if (!inGraph.has(id)) selected.set(id, route)
+  }
+  return selected
+}
+
 function buildEdges(graph: Graph, routes: Map<string, EdgeRoute>): Edge[] {
   const maxRate = graph.edges.reduce((max, e) => Math.max(max, e.rate), 0)
   return graph.edges.map((flow) => ({
@@ -220,10 +267,9 @@ function buildEdges(graph: Graph, routes: Map<string, EdgeRoute>): Edge[] {
     source: flow.source,
     target: flow.target,
     label: edgeLabel(flow),
-    // FloatingEdge (components/FloatingEdge.tsx) computes each edge's actual
-    // border-crossing point from node geometry — a smooth elbow bend that
-    // naturally fans edges apart by angle, instead of routing every edge
-    // through the same fixed handle position.
+    // FloatingEdge (components/FloatingEdge.tsx) draws `data.route`, ELK's
+    // obstacle-aware path (issue #39), while it's still valid; otherwise it
+    // falls back to a floating elbow computed from node geometry.
     type: 'floating',
     style: { strokeWidth: EDGE_STROKE_WIDTH },
     // Arrowhead at the destination end shows source -> destination even for
@@ -320,11 +366,8 @@ function reconcilePositions(
 async function layoutFlat(
   graph: Graph,
   knownPositions: NodePositionMap,
-): Promise<{
-  nodes: Node<WorkloadNodeData>[]
-  edges: Edge[]
-  positions: Map<string, { x: number; y: number }>
-}> {
+  knownRoutes: Map<string, EdgeRoute>,
+): Promise<LayoutResult> {
   const ports = workloadPorts(graph)
   const sizes = workloadSizes(graph, ports)
   const elkGraph = {
@@ -357,7 +400,8 @@ async function layoutFlat(
     data: { workload, ports: ports.get(workload.id) ?? [] },
   }))
 
-  return { nodes, edges: buildEdges(graph, routes), positions }
+  const selected = selectRoutes(graph, routes, knownRoutes, positions, sizes)
+  return { nodes, edges: buildEdges(graph, selected), positions, routes: selected }
 }
 
 // layoutSwimlanes lays out each namespace's workloads independently, then
@@ -377,11 +421,8 @@ async function layoutSwimlanes(
   arrangement: BandArrangement,
   viewportHeight: number,
   knownPositions: NodePositionMap,
-): Promise<{
-  nodes: Node<WorkloadNodeData | NamespaceBandData>[]
-  edges: Edge[]
-  positions: Map<string, { x: number; y: number }>
-}> {
+  knownRoutes: Map<string, EdgeRoute>,
+): Promise<LayoutResult> {
   const namespaceLayouts: { namespace: string; layout: ElkNode; width: number; height: number }[] = []
   const ports = workloadPorts(graph)
   const sizes = workloadSizes(graph, ports)
@@ -482,10 +523,9 @@ async function layoutSwimlanes(
     data: { workload, ports: ports.get(workload.id) ?? [] },
   }))
 
-  return { nodes: [...bandNodes, ...workloadNodes], edges: buildEdges(graph, routes), positions }
+  const selected = selectRoutes(graph, routes, knownRoutes, positions, sizes)
+  return { nodes: [...bandNodes, ...workloadNodes], edges: buildEdges(graph, selected), positions, routes: selected }
 }
-
-type Rect = { x: number; y: number; width: number; height: number }
 
 // Smallest band rectangle enclosing its members, with the same padding and
 // header room layoutSwimlanes gives an ELK-laid-out band.
@@ -571,24 +611,34 @@ export function syncNamespaceBands(prevNodes: Node[], nodes: Node[]): Node[] {
   return next
 }
 
+export type LayoutResult = {
+  nodes: Node<WorkloadNodeData | NamespaceBandData>[]
+  edges: Edge[]
+  positions: Map<string, { x: number; y: number }>
+  // The ELK route each edge was given (see selectRoutes), keyed by flowId,
+  // plus known routes of edges not in this graph — the next call's
+  // knownRoutes.
+  routes: Map<string, EdgeRoute>
+}
+
 // knownPositions carries forward previously-persisted (dragged or
 // already-anchored) node positions so a refresh reuses them instead of
 // re-running full auto-layout — see reconcilePositions. The returned
 // `positions` map is every workload's final position, ready to be persisted
 // as the new baseline for the next call (App.tsx does this via
-// lib/nodePositions.ts).
+// lib/nodePositions.ts). knownRoutes does the same for edge routes: the
+// previous call's `routes`, so an edge keeps the route that still fits its
+// persisted endpoints when ELK's fresh one doesn't (see selectRoutes). A
+// from-scratch layout (Rearrange) passes neither.
 export async function layoutGraph(
   graph: Graph,
   bandArrangement: BandArrangement = 'auto',
   knownPositions: NodePositionMap = {},
-): Promise<{
-  nodes: Node<WorkloadNodeData | NamespaceBandData>[]
-  edges: Edge[]
-  positions: Map<string, { x: number; y: number }>
-}> {
+  knownRoutes: Map<string, EdgeRoute> = new Map(),
+): Promise<LayoutResult> {
   const namespaces = Array.from(new Set(graph.nodes.map((n) => n.namespace))).sort()
   if (namespaces.length <= 1) {
-    return layoutFlat(graph, knownPositions)
+    return layoutFlat(graph, knownPositions, knownRoutes)
   }
-  return layoutSwimlanes(graph, namespaces, bandArrangement, window.innerHeight, knownPositions)
+  return layoutSwimlanes(graph, namespaces, bandArrangement, window.innerHeight, knownPositions, knownRoutes)
 }

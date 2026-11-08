@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { BaseEdge, useInternalNode, getSmoothStepPath, type EdgeProps, type InternalNode } from '@xyflow/react'
+import { BaseEdge, useInternalNode, useStore, getSmoothStepPath, type EdgeProps, type InternalNode } from '@xyflow/react'
 import { getEdgeParams } from '../lib/floatingEdge'
 import type { TrafficDots } from '../lib/layout'
-import { placeRoute, roundedPolylinePath, type EdgeRoute } from '../lib/edgeRoute'
+import { chooseRoute, placeRoute, roundedPolylinePath, type EdgeRoute, type Rect } from '../lib/edgeRoute'
 
 // Corner radius for the elbow bend — larger than smoothstep's tiny default
 // so turns read as a deliberate curve rather than a sharp right angle.
@@ -42,21 +42,56 @@ function floatingElbowPath(sourceNode: InternalNode, targetNode: InternalNode): 
   return [path, labelX, labelY]
 }
 
+// Whether ELK's route can still be drawn at the nodes' *current* positions,
+// re-checked live (during drags too), not just when layout picked it:
+// - Both endpoints must have moved by the same offset since layout (an
+//   untouched pair, or a namespace band dragged as one block) — see
+//   placeRoute. Dragging one endpoint on its own makes the route stale, and
+//   the edge reverts to the floating elbow until the next Rearrange gives
+//   ELK a chance to route it again. Decision for #39: ELK can't re-route
+//   around fixed positions (that's #46), and redrawing a detour computed for
+//   a node position that no longer exists — or bending the old polyline to
+//   reach the new spot — would show a path that looks obstacle-aware but
+//   isn't. The plain elbow is honest about being a fallback.
+// - No other workload box may sit on the route. Dropping a dragged node
+//   onto someone else's detour, or persisted positions (#43) disagreeing
+//   with the layout a route came from, would otherwise leave an "avoiding"
+//   path drawn straight through a box.
+function routeIsLive(route: EdgeRoute, source: string, target: string, nodeLookup: Map<string, InternalNode>): boolean {
+  const sourceNode = nodeLookup.get(source)
+  const targetNode = nodeLookup.get(target)
+  if (!sourceNode || !targetNode) return false
+  const obstacles: Rect[] = []
+  for (const [id, node] of nodeLookup) {
+    if (id === source || id === target || node.type !== 'workload') continue
+    obstacles.push({
+      ...node.internals.positionAbsolute,
+      width: node.measured.width ?? 0,
+      height: node.measured.height ?? 0,
+    })
+  }
+  return chooseRoute([route], sourceNode.internals.positionAbsolute, targetNode.internals.positionAbsolute, obstacles) !== null
+}
+
 export function FloatingEdge({ id, source, target, markerEnd, style, label, selected, data }: EdgeProps) {
   const [hovered, setHovered] = useState(false)
   const sourceNode = useInternalNode(source)
   const targetNode = useInternalNode(target)
+  const route = data?.route as EdgeRoute | undefined
+  // A boolean selector, so this edge only re-renders when the answer flips,
+  // not on every node move or viewport change the store reports.
+  const routeLive = useStore((s) => (route ? routeIsLive(route, source, target, s.nodeLookup) : false))
 
   if (!sourceNode || !targetNode) return null
 
-  // Prefer the obstacle-aware route ELK computed during layout (issue #39);
-  // it's dropped once a drag moves the endpoints apart from where ELK placed
-  // them (see placeRoute), and edges ELK never routed (cross-namespace) have
-  // none — both fall back to the floating elbow below.
-  const route = data?.route as EdgeRoute | undefined
-  const routePoints = route
-    ? placeRoute(route, sourceNode.internals.positionAbsolute, targetNode.internals.positionAbsolute)
-    : null
+  // Prefer the obstacle-aware route ELK computed during layout (issue #39),
+  // but only while it's still true: see routeIsLive. Edges ELK never routed
+  // (cross-namespace) have none. Both cases fall back to the floating elbow
+  // below — obstacle-unaware, but never pretending to be a computed detour.
+  const routePoints =
+    route && routeLive
+      ? placeRoute(route, sourceNode.internals.positionAbsolute, targetNode.internals.positionAbsolute)
+      : null
 
   const [path, labelX, labelY] = routePoints
     ? roundedPolylinePath(routePoints, BORDER_RADIUS)
