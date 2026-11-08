@@ -124,6 +124,10 @@ func TestSourcesHandler_NeitherPresent(t *testing.T) {
 	if len(resp.Sources) != 0 {
 		t.Errorf("sources = %v, want empty", resp.Sources)
 	}
+	// An empty array, not null: the UI calls sources.length on it.
+	if !strings.Contains(rec.Body.String(), `"sources":[]`) {
+		t.Errorf("body = %s, want \"sources\":[]", rec.Body.String())
+	}
 }
 
 func TestSourcesHandler_PrometheusError(t *testing.T) {

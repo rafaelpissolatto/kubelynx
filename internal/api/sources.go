@@ -31,6 +31,12 @@ func SourcesHandler(prom promv1.API) http.HandlerFunc {
 			return
 		}
 
+		// Always a JSON array, never null: the UI reads sources.length, and
+		// a cluster with no telemetry yet has no sources at all.
+		if sources == nil {
+			sources = []string{}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		resp := sourcesResponse{Sources: sources, Default: topology.SourceBeyla}
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
