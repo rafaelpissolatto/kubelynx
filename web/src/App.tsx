@@ -3,6 +3,7 @@ import {
   applyNodeChanges,
   Background,
   Controls,
+  MiniMap,
   ReactFlow,
   type Edge,
   type Node,
@@ -118,6 +119,13 @@ type LoadState =
 function isTextEntry(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
   return target.isContentEditable || target.closest('input, textarea, select') !== null
+}
+
+// Minimap (issue #81): bands as their own tinted rectangles, workloads as
+// small boxes, the selected workload accented — colors in App.css.
+function minimapNodeClass(node: Node): string {
+  if (node.type === 'namespaceBand') return 'canvas-minimap__band'
+  return node.selected ? 'canvas-minimap__workload canvas-minimap__workload--selected' : 'canvas-minimap__workload'
 }
 
 // Keeps React Flow's object identity for anything whose class doesn't change,
@@ -931,6 +939,16 @@ function App() {
                 <Controls showInteractive={false}>
                   <ZoomReadout />
                 </Controls>
+                {displayOptions.minimap && (
+                  <MiniMap
+                    className="canvas-minimap"
+                    nodeClassName={minimapNodeClass}
+                    nodeBorderRadius={2}
+                    pannable
+                    zoomable
+                    ariaLabel="Minimap"
+                  />
+                )}
               </ReactFlow>
             </EdgeDisplayContext.Provider>
           )}

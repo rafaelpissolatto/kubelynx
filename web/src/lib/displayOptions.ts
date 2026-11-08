@@ -28,6 +28,8 @@ export interface DisplayOptions {
   lowTrafficCutoff: LowTrafficCutoff
   // Band backgrounds and titles; visual only, layout is unchanged.
   namespaceBands: boolean
+  // React Flow's overview minimap in the canvas corner (issue #81).
+  minimap: boolean
 }
 
 // Matches how the graph looked before Display ▾ existed.
@@ -36,6 +38,7 @@ export const DEFAULT_DISPLAY_OPTIONS: DisplayOptions = {
   trafficAnimation: true,
   lowTrafficCutoff: 0,
   namespaceBands: true,
+  minimap: false,
 }
 
 const STORAGE_KEY = 'kubelynx.display'
@@ -54,6 +57,7 @@ function parse(raw: string): DisplayOptions {
       ? (v.lowTrafficCutoff as LowTrafficCutoff)
       : d.lowTrafficCutoff,
     namespaceBands: typeof v.namespaceBands === 'boolean' ? v.namespaceBands : d.namespaceBands,
+    minimap: typeof v.minimap === 'boolean' ? v.minimap : d.minimap,
   }
 }
 

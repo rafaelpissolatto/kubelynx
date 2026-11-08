@@ -1251,6 +1251,48 @@ body,
   outline-offset: -2px;
 }
 
+/* Minimap (Display -> Minimap, issue #81): the page background, bands as
+   blocks, workloads as small boxes in the edge color; outside the viewport
+   is washed back toward the background. */
+.react-flow__minimap.canvas-minimap {
+  --xy-minimap-background-color: var(--bg);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--bg) 60%, transparent);
+  --xy-minimap-mask-stroke-color: var(--border-selected);
+  --xy-minimap-mask-stroke-width: 2;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* The canvas tint alone is too faint at minimap scale, so a band is a
+   surface-colored block with a hairline border (non-scaling, so it stays
+   1px however far the minimap is zoomed out). */
+.react-flow__minimap-node.canvas-minimap__band {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.react-flow__minimap-node.canvas-minimap__workload {
+  fill: var(--edge-stroke);
+}
+
+.react-flow__minimap-node.canvas-minimap__workload--selected {
+  fill: var(--accent);
+}
+
+.app__canvas[data-namespace-bands='hidden'] .canvas-minimap__band {
+  visibility: hidden;
+}
+
+/* Too small to be useful next to the flows panel on a phone. */
+@media (max-width: 640px) {
+  .react-flow__minimap.canvas-minimap {
+    display: none;
+  }
+}
+
 /* Default (unselected) flow edges use a muted purple (--edge-stroke) so
    they belong to the same palette as the accented selection, rather than
    React Flow's library-default gray. */
