@@ -77,6 +77,67 @@ func TestTopologyHandler_ReturnsGraphJSON(t *testing.T) {
 	}
 }
 
+func TestTopologyHandler_Istio_IncludesSecurity(t *testing.T) {
+	prom := fakePromAPI(t, `{
+	  "status": "success",
+	  "data": {
+	    "resultType": "vector",
+	    "result": [
+	      {
+	        "metric": {
+	          "source_workload": "backend",
+	          "source_workload_namespace": "mesh-backend",
+	          "destination_workload": "db",
+	          "destination_workload_namespace": "mesh-backend",
+	          "request_protocol": "http",
+	          "connection_security_policy": "mutual_tls"
+	        },
+	        "value": [1700000000, "8"]
+	      },
+	      {
+	        "metric": {
+	          "source_workload": "backend",
+	          "source_workload_namespace": "mesh-backend",
+	          "destination_workload": "db",
+	          "destination_workload_namespace": "mesh-backend",
+	          "request_protocol": "http",
+	          "connection_security_policy": "none"
+	        },
+	        "value": [1700000000, "2"]
+	      }
+	    ]
+	  }
+	}`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace=mesh-backend&source=istio", nil)
+	rec := httptest.NewRecorder()
+
+	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Edges []map[string]any `json:"edges"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(body.Edges) != 1 {
+		t.Fatalf("want 1 edge, got %d: %s", len(body.Edges), rec.Body.String())
+	}
+	edge := body.Edges[0]
+	if edge["security"] != "mixed" {
+		t.Errorf("security = %v, want \"mixed\"; body: %s", edge["security"], rec.Body.String())
+	}
+	if edge["mtlsRatio"] != 0.8 {
+		t.Errorf("mtlsRatio = %v, want 0.8; body: %s", edge["mtlsRatio"], rec.Body.String())
+	}
+	if edge["rate"] != 10.0 {
+		t.Errorf("rate = %v, want 10; body: %s", edge["rate"], rec.Body.String())
+	}
+}
+
 func TestTopologyHandler_DefaultsNamespace(t *testing.T) {
 	prom := fakePromAPI(t, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
 

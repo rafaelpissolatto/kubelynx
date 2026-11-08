@@ -32,6 +32,26 @@ const (
 	istioDstNSLabel       = "destination_workload_namespace"
 	istioProtocolLabel    = "request_protocol"
 
+	// istioSecurityLabel carries the connection's security policy, read into
+	// Flow.Security (issue #90, ADR 0002 amendment). Verified against the
+	// ambient lab cluster (ztunnel + one waypoint in mesh-backend):
+	//   - istio_requests_total (reporter="waypoint", job istio/istio-waypoint):
+	//     "mutual_tls" on mesh-frontend/frontend → mesh-backend/backend.
+	//   - istio_tcp_sent/received_bytes_total (job istio/ztunnel, reporter
+	//     "source" and "destination"): "mutual_tls" on in-mesh HBONE hops
+	//     (frontend → waypoint, waypoint → backend), and "unknown" on every
+	//     hop into or out of the mesh (nginx gateway → frontend, loadgen →
+	//     gateway, frontend → an unresolved destination).
+	// "none" was never observed: in ambient mode ztunnel reports a plaintext
+	// hop to or from a non-mesh workload as "unknown", so such an edge shows
+	// as SecurityUnknown, not SecurityNone. "none" is still handled because
+	// it's Istio's documented value for a plaintext connection (e.g. sidecar
+	// mode under PERMISSIVE peer authentication), though no lab traffic
+	// produced it.
+	// A missing label or any other value is treated as "unknown" (see
+	// mapSample).
+	istioSecurityLabel = "connection_security_policy"
+
 	// istioProtocolTCP is the request_protocol value istio_tcp_sent_bytes_total
 	// and istio_tcp_received_bytes_total both carry, confirmed against the
 	// lab cluster — it's what distinguishes a TCP (MetricBytes) sample from
@@ -110,8 +130,11 @@ func istioMetricQuery(metricName string, namespaces []string, extraMatcher strin
 // "unknown" is Istio's own placeholder for an endpoint ztunnel/the waypoint
 // couldn't resolve (observed on the lab cluster for traffic leaving the
 // mesh), not a real Workload, so it's treated the same as Beyla's "missing
-// attribute" case: no edge drawn.
-func (istioSource) mapSample(metric model.Metric) (src, dst Workload, protocol, port, metricKind string, ok bool) {
+// attribute" case: no edge drawn. security is the sample's
+// connection_security_policy, normalised to SecurityUnknown when the label
+// is missing or carries any value other than mutual_tls/none — never "",
+// since Istio does observe connection security (see edgeSecurity).
+func (istioSource) mapSample(metric model.Metric) (src, dst Workload, protocol, port, metricKind, security string, ok bool) {
 	srcName := string(metric[istioSrcWorkloadLabel])
 	srcNS := string(metric[istioSrcNSLabel])
 	dstName := string(metric[istioDstWorkloadLabel])
@@ -119,7 +142,7 @@ func (istioSource) mapSample(metric model.Metric) (src, dst Workload, protocol, 
 
 	if !isResolvedIstioIdentity(srcName) || !isResolvedIstioIdentity(srcNS) ||
 		!isResolvedIstioIdentity(dstName) || !isResolvedIstioIdentity(dstNS) {
-		return Workload{}, Workload{}, "", "", "", false
+		return Workload{}, Workload{}, "", "", "", "", false
 	}
 
 	src = Workload{ID: workloadID(srcNS, srcName), Name: srcName, Namespace: srcNS}
@@ -132,7 +155,12 @@ func (istioSource) mapSample(metric model.Metric) (src, dst Workload, protocol, 
 	}
 	// No destination-port label exists on any of these metrics (VERIFY-001).
 	port = ""
-	return src, dst, protocol, port, metricKind, true
+
+	security = string(metric[istioSecurityLabel])
+	if security != SecurityMutualTLS && security != SecurityNone {
+		security = SecurityUnknown
+	}
+	return src, dst, protocol, port, metricKind, security, true
 }
 
 // isResolvedIstioIdentity reports whether v is a usable workload/namespace
