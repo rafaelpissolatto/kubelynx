@@ -7,6 +7,7 @@ import {
   type Edge,
   type Node,
   type NodeChange,
+  type ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './App.css'
@@ -35,6 +36,8 @@ import { DisplayMenu } from './components/DisplayMenu'
 import { RefreshStatus } from './components/RefreshStatus'
 import { WorkloadPanel } from './components/WorkloadPanel'
 import { touchesWorkload } from './lib/workloadSelection'
+import { graphEmphasis, loadFocusMode, saveFocusMode } from './lib/graphEmphasis'
+import { WorkloadSearch } from './components/WorkloadSearch'
 import { PanControls } from './components/PanControls'
 import { FloatingEdge } from './components/FloatingEdge'
 import {
@@ -73,7 +76,10 @@ const FLOWS_PANEL_RESIZE_STEP = 20
 // Fallback used only until the --accent custom property has been read from
 // the DOM once (see accentColor below) — matches the dark theme's default.
 const DEFAULT_ACCENT = '#b79cff'
-const UNSELECTED_FLOW_OPACITY = 0.35
+// Zoom a search jump settles at (issue #77) when the view is further out
+// than this; a closer view is kept as-is and only panned.
+const SEARCH_JUMP_MIN_ZOOM = 1
+const SEARCH_JUMP_DURATION_MS = 300
 
 const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_PROTOCOL: ProtocolFilterValue = 'all'
@@ -95,6 +101,18 @@ type LoadState =
   | { status: 'error'; kind: ErrorKind; message: string }
   // fetchedAt drives the header's "updated Ns ago" (issue #74).
   | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph; fetchedAt: number }
+
+// `/` focuses search from anywhere except a place the user is typing.
+function isTextEntry(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return target.isContentEditable || target.closest('input, textarea, select') !== null
+}
+
+// Keeps React Flow's object identity for anything whose class doesn't change,
+// so an unchanged node or edge isn't handed to React Flow as new.
+function withClass<T extends { className?: string }>(item: T, className: string | undefined): T {
+  return (item.className ?? undefined) === className ? item : { ...item, className }
+}
 
 function positionsToRecord(positions: Map<string, { x: number; y: number }>): NodePositionMap {
   return Object.fromEntries(positions)
@@ -170,6 +188,16 @@ function App() {
   // flag; renderedNodes below derives that flag from it. Independent of
   // selectedFlowId: a workload and one of its flows can be selected at once.
   const [selectedWorkloadId, setSelectedWorkloadId] = useState<string | null>(null)
+  // Search (issue #77): the raw query, and the workload last stepped to with
+  // Enter — an ID rather than an index, so a refresh that adds or drops
+  // matches doesn't shift which one the next Enter moves on from.
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchCursor, setSearchCursor] = useState<string | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  // One-hop focus mode (issue #77) around the selected workload; on by
+  // default, toggled from the Workload panel.
+  const [focusMode, setFocusMode] = useState(loadFocusMode)
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
   // The backend's --refresh-interval (see the /api/config effect below) sets
   // the default; ?refreshInterval=<ms> overrides it, same convention as
   // ?namespace=.
@@ -399,23 +427,39 @@ function App() {
     return state.graph.edges.find((flow) => flowId(flow) === selectedFlowId) ?? null
   }, [state, selectedFlowId])
 
-  // Highlights the selected flow's edge and dims the rest, so a selection
-  // made from the table (which has no notion of edge geometry) is still
-  // visible on the graph — and vice versa, via ReactFlow's onEdgeClick below.
   const selectedWorkload = useMemo(() => {
     if (state.status !== 'ready' || !selectedWorkloadId) return null
     return state.graph.nodes.find((workload) => workload.id === selectedWorkloadId) ?? null
   }, [state, selectedWorkloadId])
 
-  // React Flow's `selected` flag is derived here rather than stored in
-  // state.nodes: a background refresh replaces every node object, and
-  // selection must never feed back into layout or persisted positions — only
-  // the one selected node gets a new object, everything else passes through.
+  // Everything search, focus mode and flow selection dim, in one place (see
+  // lib/graphEmphasis.ts). Recomputed from the latest graph, so it follows
+  // workloads appearing or disappearing on a background refresh.
+  const emphasis = useMemo(() => {
+    if (state.status !== 'ready') return null
+    return graphEmphasis(state.graph, searchQuery, selectedWorkloadId, selectedFlowId, focusMode)
+  }, [state, searchQuery, selectedWorkloadId, selectedFlowId, focusMode])
+  const searchMatchIds = useMemo(() => new Set(emphasis?.matches ?? []), [emphasis])
+
+  // React Flow's `selected` flag and the dim/match classes are derived here
+  // rather than stored in state.nodes: a background refresh replaces every
+  // node object, and selection or dimming must never feed back into layout
+  // or persisted positions. Dimming is a class (opacity in App.css), so it
+  // can't move or resize anything. Namespace bands are containers and are
+  // never dimmed.
   const renderedNodes = useMemo(() => {
     if (state.status !== 'ready') return []
-    if (!selectedWorkloadId) return state.nodes
-    return state.nodes.map((node) => (node.id === selectedWorkloadId ? { ...node, selected: true } : node))
-  }, [state, selectedWorkloadId])
+    const litNodes = emphasis?.litNodes ?? null
+    if (!selectedWorkloadId && !litNodes) return state.nodes
+    return state.nodes.map((node) => {
+      if (node.type !== 'workload') return node
+      const classes = []
+      if (litNodes && !litNodes.has(node.id)) classes.push('is-dimmed')
+      if (searchMatchIds.has(node.id)) classes.push('is-match')
+      const styled = withClass(node, classes.length ? classes.join(' ') : undefined)
+      return node.id === selectedWorkloadId ? { ...styled, selected: true } : styled
+    })
+  }, [state, emphasis, searchMatchIds, selectedWorkloadId])
 
   // Flows the low-traffic cutoff takes off the canvas (recomputed on every
   // refresh, per Flow.metric — see hiddenFlowIds). They stay in the flows
@@ -428,41 +472,79 @@ function App() {
 
   const renderedEdges = useMemo(() => {
     if (state.status !== 'ready') return []
+    // The low-traffic cutoff (#76) removes edges first; emphasis (#77) then
+    // dims what's left. A hidden flow that's selected is drawn anyway.
     const edges =
       hiddenFlows.size === 0 ? state.edges : state.edges.filter((edge) => !hiddenFlows.has(edge.id) || edge.id === selectedFlowId)
-    if (!selectedFlowId) {
-      if (!selectedWorkloadId) return edges
-      // A selected workload with no flow picked yet: its own flows stay at
-      // full strength and the rest recede, so the panel's lists are easy to
-      // trace on the graph.
-      return edges.map((edge) =>
-        edge.source === selectedWorkloadId || edge.target === selectedWorkloadId
-          ? edge
-          : { ...edge, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
-      )
-    }
-    return edges.map((edge) =>
-      edge.id === selectedFlowId
-        ? {
-            ...edge,
-            selected: true,
-            zIndex: 1,
-            // FloatingEdge's direction marks follow this stroke too.
-            style: { ...edge.style, stroke: accentColor },
-          }
-        : { ...edge, selected: false, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
-    )
-  }, [state, hiddenFlows, selectedFlowId, selectedWorkloadId, accentColor])
+    const litEdges = emphasis?.litEdges ?? null
+    if (!litEdges) return edges
+    return edges.map((edge) => {
+      if (edge.id === selectedFlowId) {
+        return {
+          ...edge,
+          selected: true,
+          zIndex: 1,
+          // FloatingEdge's direction marks follow this stroke too.
+          style: { ...edge.style, stroke: accentColor },
+        }
+      }
+      // A selected flow is accented and the rest recede, so a selection made
+      // from the table (which has no notion of edge geometry) is still
+      // visible on the graph. .is-dimmed sits on the edge's <g>, so the line, #79's chevron and
+      // arrowhead, the label and the traffic dots all recede together.
+      const dimmed = withClass(edge, litEdges.has(edge.id) ? undefined : 'is-dimmed')
+      return selectedFlowId ? { ...dimmed, selected: false } : dimmed
+    })
+  }, [state, hiddenFlows, emphasis, selectedFlowId, accentColor])
 
   const { edgeLabels, trafficAnimation } = displayOptions
   const edgeDisplay = useMemo(() => ({ edgeLabels, trafficAnimation }), [edgeLabels, trafficAnimation])
+
+  const searchCurrentIndex = searchCursor ? (emphasis?.matches.indexOf(searchCursor) ?? -1) : -1
+
+  function handleSearchQueryChange(query: string) {
+    setSearchQuery(query)
+    setSearchCursor(null)
+  }
+
+  // Enter / Shift+Enter: select the next or previous match through the same
+  // entry point a click uses, and bring it into view. Viewport only — no
+  // node moves, so persisted positions and ELK routes stay as they are.
+  function stepSearch(direction: 1 | -1) {
+    const matches = emphasis?.matches ?? []
+    if (matches.length === 0) return
+    const from = searchCursor ? matches.indexOf(searchCursor) : -1
+    const index =
+      from < 0 ? (direction === 1 ? 0 : matches.length - 1) : (from + direction + matches.length) % matches.length
+    const id = matches[index]
+    setSearchCursor(id)
+    selectWorkload(id)
+    const node = flowInstance?.getInternalNode(id)
+    if (!flowInstance || !node) return
+    const width = node.measured.width ?? 0
+    const height = node.measured.height ?? 0
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    flowInstance.setCenter(
+      node.internals.positionAbsolute.x + width / 2,
+      node.internals.positionAbsolute.y + height / 2,
+      {
+        zoom: Math.max(flowInstance.getZoom(), SEARCH_JUMP_MIN_ZOOM),
+        duration: reduceMotion ? 0 : SEARCH_JUMP_DURATION_MS,
+      },
+    )
+  }
+
+  function handleFocusModeChange(on: boolean) {
+    setFocusMode(on)
+    saveFocusMode(on)
+  }
 
   function toggleSelectedFlow(id: string) {
     setSelectedFlowId((prev) => (prev === id ? null : id))
   }
 
   // The one entry point for selecting a workload — node click, keyboard
-  // (Enter/Space on a focused node), and later #77's search all go through
+  // (Enter/Space on a focused node), and #77's search (Enter) all go through
   // it. A selected flow survives only if it belongs to the new workload.
   function selectWorkload(id: string) {
     setSelectedWorkloadId(id)
@@ -488,13 +570,29 @@ function App() {
     }
   }
 
+  // Escape peels back one layer per press: the search first, then the
+  // selection. `/` jumps to search unless the user is already typing.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape' && !event.defaultPrevented) clearSelection()
+      if (event.defaultPrevented) return
+      if (event.key === 'Escape') {
+        if (searchQuery) {
+          setSearchQuery('')
+          setSearchCursor(null)
+        } else {
+          clearSelection()
+        }
+        return
+      }
+      if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey && !isTextEntry(event.target)) {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+        searchInputRef.current?.select()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [clearSelection])
+  }, [clearSelection, searchQuery])
 
   // Conservative by construction: while /api/namespaces hasn't resolved yet
   // (or failed), this stays false, so a zero-node topology result renders as
@@ -643,8 +741,16 @@ function App() {
           <SourceSelector sources={sources} selected={source} onChange={setSource} />
           <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
         </div>
-        {/* Search slot, reserved for #77: empty (and zero-width) until then. */}
-        <div className="app__zone app__zone--search" />
+        <div className="app__zone app__zone--search" role="search">
+          <WorkloadSearch
+            inputRef={searchInputRef}
+            query={searchQuery}
+            onQueryChange={handleSearchQueryChange}
+            matchCount={emphasis?.matches.length ?? 0}
+            currentIndex={searchCurrentIndex}
+            onStep={stepSearch}
+          />
+        </div>
         {/* Quiet status line: what the current scope returned. */}
         <span className="app__summary">{summary}</span>
         <div className="app__zone app__zone--view" role="group" aria-label="View">
@@ -724,6 +830,7 @@ function App() {
                 onNodeDragStop={handleNodeDragStop}
                 onEdgeClick={handleEdgeClick}
                 onPaneClick={clearSelection}
+                onInit={setFlowInstance}
               >
                 <Background color="var(--rf-background-dot)" />
                 <Controls showInteractive={false} />
@@ -753,6 +860,8 @@ function App() {
               source={source}
               selectedFlowId={selectedFlowId}
               onSelectFlow={toggleSelectedFlow}
+              focusMode={focusMode}
+              onFocusModeChange={handleFocusModeChange}
               onClose={() => setSelectedWorkloadId(null)}
             />
           ) : (
