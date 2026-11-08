@@ -53,7 +53,8 @@ func LoadProtocolClasses(path string) (ProtocolClasses, error) {
 		return DefaultProtocolClasses(), nil
 	}
 
-	data, err := os.ReadFile(path)
+	// Path comes from an operator-set CLI flag, not from a request.
+	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied config file path
 	if err != nil {
 		return ProtocolClasses{}, fmt.Errorf("reading protocol classes file %s: %w", path, err)
 	}
