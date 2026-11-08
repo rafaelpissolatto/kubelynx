@@ -31,8 +31,8 @@ import { ProtocolFilter } from './components/ProtocolFilter'
 import { SourceSelector } from './components/SourceSelector'
 import { FlowsTable } from './components/FlowsTable'
 import { FlowDetailPanel } from './components/FlowDetailPanel'
-import { ThemeToggle } from './components/ThemeToggle'
-import { BandArrangementToggle } from './components/BandArrangementToggle'
+import { SettingsMenu } from './components/SettingsMenu'
+import { RefreshStatus } from './components/RefreshStatus'
 import { PanControls } from './components/PanControls'
 import { FloatingEdge } from './components/FloatingEdge'
 import {
@@ -84,7 +84,8 @@ type ErrorKind = 'unreachable' | 'invalid' | 'unknown'
 type LoadState =
   | { status: 'loading' }
   | { status: 'error'; kind: ErrorKind; message: string }
-  | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
+  // fetchedAt drives the header's "updated Ns ago" (issue #74).
+  | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph; fetchedAt: number }
 
 function positionsToRecord(positions: Map<string, { x: number; y: number }>): NodePositionMap {
   return Object.fromEntries(positions)
@@ -100,7 +101,7 @@ async function loadTopology(
 ) {
   const graph = await fetchTopology(namespace, protocol, source)
   const { nodes, edges, positions, routes } = await layoutGraph(graph, bandArrangement, knownPositions, knownRoutes)
-  return { nodes, edges, graph, positions, routes }
+  return { nodes, edges, graph, positions, routes, fetchedAt: Date.now() }
 }
 
 // Status codes TopologyHandler (internal/api/topology.go) responds with:
@@ -503,53 +504,72 @@ function App() {
   // across the next refresh.
   function handleRearrange() {
     if (state.status !== 'ready') return
-    const graph = state.graph
+    const { graph, fetchedAt } = state
     clearNodePositions(positionScope)
     layoutGraph(graph, bandArrangement, {}).then(({ nodes, edges, positions, routes }) => {
       nodePositionsRef.current = positionsToRecord(positions)
       edgeRoutesRef.current = routes
       saveNodePositions(positionScope, nodePositionsRef.current)
       saveEdgeRoutes(positionScope, routes)
-      setState({ status: 'ready', nodes, edges, graph })
+      setState({ status: 'ready', nodes, edges, graph, fetchedAt })
     })
   }
 
   return (
     <div className="app" data-theme={resolvedTheme} ref={appRef}>
+      {/* Four zones, left to right (issue #74): scope (which data), search,
+          view (how it's drawn + refresh), settings (app preferences). */}
       <header className="app__header">
         <span className="app__brand">
           <img className="app__logo" src="/logo.svg" alt="" width={24} height={24} />
-          KubeLynx
+          <span className="app__brand-name">KubeLynx</span>
         </span>
-        <NamespaceMultiSelect
-          namespaces={namespaces}
-          allValue={allNamespacesValue}
-          max={maxNamespaces}
-          selected={selectedNamespaces}
-          onChange={setSelectedNamespaces}
-        />
-        <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
-        <SourceSelector sources={sources} selected={source} onChange={setSource} />
-        <BandArrangementToggle selected={bandArrangement} onChange={handleBandArrangementChange} />
-        <button
-          type="button"
-          className="app__refresh-toggle"
-          onClick={handleRearrange}
-          disabled={state.status !== 'ready'}
-          title="Discard manually-placed positions and re-run auto-layout"
-        >
-          ⤢ Rearrange
-        </button>
-        <button
-          type="button"
-          className="app__refresh-toggle"
-          onClick={handleTogglePause}
-          aria-pressed={paused}
-        >
-          {paused ? '▶ Resume' : '⏸ Pause'}
-        </button>
-        <ThemeToggle selected={theme} onChange={handleThemeChange} />
-        {summary && <span className="app__summary">{summary}</span>}
+        <div className="app__zone app__zone--scope" role="group" aria-label="Data scope">
+          <NamespaceMultiSelect
+            namespaces={namespaces}
+            allValue={allNamespacesValue}
+            max={maxNamespaces}
+            selected={selectedNamespaces}
+            onChange={setSelectedNamespaces}
+          />
+          <SourceSelector sources={sources} selected={source} onChange={setSource} />
+          <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
+        </div>
+        {/* Search slot, reserved for #77: empty (and zero-width) until then. */}
+        <div className="app__zone app__zone--search" />
+        {/* Quiet status line: what the current scope returned. */}
+        <span className="app__summary">{summary}</span>
+        <div className="app__zone app__zone--view" role="group" aria-label="View">
+          {/* Display ▾ (#76) mounts here, first in the zone, as a
+              <HeaderMenu label="Display"> like SettingsMenu. */}
+          <button
+            type="button"
+            className="header-control"
+            onClick={handleRearrange}
+            disabled={state.status !== 'ready'}
+            title="Discard manually-placed positions and re-run auto-layout"
+          >
+            Rearrange
+          </button>
+          <button
+            type="button"
+            className="header-control app__pause-toggle"
+            onClick={handleTogglePause}
+            aria-pressed={paused}
+            title={paused ? 'Resume automatic refresh' : 'Stop automatic refresh'}
+          >
+            {paused ? 'Resume' : 'Pause'}
+          </button>
+          <RefreshStatus updatedAt={state.status === 'ready' ? state.fetchedAt : null} paused={paused} />
+        </div>
+        <div className="app__zone app__zone--settings">
+          <SettingsMenu
+            theme={theme}
+            onThemeChange={handleThemeChange}
+            bandArrangement={bandArrangement}
+            onBandArrangementChange={handleBandArrangementChange}
+          />
+        </div>
       </header>
       <div className="app__body">
         <main className="app__canvas">
