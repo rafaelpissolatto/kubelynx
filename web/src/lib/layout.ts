@@ -1,5 +1,5 @@
 import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js'
-import { MarkerType, type Edge, type Node } from '@xyflow/react'
+import type { Edge, Node } from '@xyflow/react'
 import { flowId, type Flow, type Graph, type Workload } from './topology'
 import type { BandArrangement } from './bandArrangement'
 import type { NodePositionMap } from './nodePositions'
@@ -272,9 +272,9 @@ function buildEdges(graph: Graph, routes: Map<string, EdgeRoute>): Edge[] {
     // falls back to a floating elbow computed from node geometry.
     type: 'floating',
     style: { strokeWidth: EDGE_STROKE_WIDTH },
-    // Arrowhead at the destination end shows source -> destination even for
-    // zero-traffic edges, which have no moving dots to show it.
-    markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--edge-stroke)' },
+    // No markerEnd: FloatingEdge draws its own direction marks (a mid-edge
+    // chevron and a slim open arrowhead, issue #79), which show
+    // source -> destination even for zero-traffic or paused edges.
     // FloatingEdge renders these as dots moving along the edge's path.
     data: {
       flow,

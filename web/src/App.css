@@ -570,6 +570,16 @@ body,
   stroke: var(--edge-stroke);
 }
 
+/* Mid-edge chevron and target arrowhead (FloatingEdge, issue #79). They
+   also carry .react-flow__edge-path, so stroke color follows the line in
+   every state; these only make them open, round-jointed strokes. */
+.flow-edge__direction {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
 .flow-edge__traffic-dot {
   fill: var(--accent);
   pointer-events: none;
