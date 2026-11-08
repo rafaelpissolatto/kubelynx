@@ -5,7 +5,6 @@ import {
   Controls,
   ReactFlow,
   type Edge,
-  type EdgeMarker,
   type Node,
   type NodeChange,
 } from '@xyflow/react'
@@ -31,8 +30,10 @@ import { ProtocolFilter } from './components/ProtocolFilter'
 import { SourceSelector } from './components/SourceSelector'
 import { FlowsTable } from './components/FlowsTable'
 import { FlowDetailPanel } from './components/FlowDetailPanel'
-import { ThemeToggle } from './components/ThemeToggle'
-import { BandArrangementToggle } from './components/BandArrangementToggle'
+import { SettingsMenu } from './components/SettingsMenu'
+import { RefreshStatus } from './components/RefreshStatus'
+import { WorkloadPanel } from './components/WorkloadPanel'
+import { touchesWorkload } from './lib/workloadSelection'
 import { PanControls } from './components/PanControls'
 import { FloatingEdge } from './components/FloatingEdge'
 import {
@@ -84,7 +85,8 @@ type ErrorKind = 'unreachable' | 'invalid' | 'unknown'
 type LoadState =
   | { status: 'loading' }
   | { status: 'error'; kind: ErrorKind; message: string }
-  | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph }
+  // fetchedAt drives the header's "updated Ns ago" (issue #74).
+  | { status: 'ready'; nodes: Node[]; edges: Edge[]; graph: Graph; fetchedAt: number }
 
 function positionsToRecord(positions: Map<string, { x: number; y: number }>): NodePositionMap {
   return Object.fromEntries(positions)
@@ -100,7 +102,7 @@ async function loadTopology(
 ) {
   const graph = await fetchTopology(namespace, protocol, source)
   const { nodes, edges, positions, routes } = await layoutGraph(graph, bandArrangement, knownPositions, knownRoutes)
-  return { nodes, edges, graph, positions, routes }
+  return { nodes, edges, graph, positions, routes, fetchedAt: Date.now() }
 }
 
 // Status codes TopologyHandler (internal/api/topology.go) responds with:
@@ -153,6 +155,13 @@ function App() {
   // Identifies the flow selected in either the table or the graph — see
   // flowId — so the two stay in sync no matter which one triggered it.
   const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null)
+  // The selected Workload node (issue #75), by workload ID — the same ID the
+  // graph's nodes and Flow.source/target use, so it survives a background
+  // refresh (which rebuilds every node object) as long as the workload is
+  // still observed. App owns it rather than React Flow's per-node `selected`
+  // flag; renderedNodes below derives that flag from it. Independent of
+  // selectedFlowId: a workload and one of its flows can be selected at once.
+  const [selectedWorkloadId, setSelectedWorkloadId] = useState<string | null>(null)
   // The backend's --refresh-interval (see the /api/config effect below) sets
   // the default; ?refreshInterval=<ms> overrides it, same convention as
   // ?namespace=.
@@ -302,6 +311,7 @@ function App() {
     let cancelled = false
     setState({ status: 'loading' })
     setSelectedFlowId(null)
+    setSelectedWorkloadId(null)
     nodePositionsRef.current = loadNodePositions(positionScope)
     edgeRoutesRef.current = loadEdgeRoutes(positionScope)
 
@@ -376,27 +386,85 @@ function App() {
   // Highlights the selected flow's edge and dims the rest, so a selection
   // made from the table (which has no notion of edge geometry) is still
   // visible on the graph — and vice versa, via ReactFlow's onEdgeClick below.
+  const selectedWorkload = useMemo(() => {
+    if (state.status !== 'ready' || !selectedWorkloadId) return null
+    return state.graph.nodes.find((workload) => workload.id === selectedWorkloadId) ?? null
+  }, [state, selectedWorkloadId])
+
+  // React Flow's `selected` flag is derived here rather than stored in
+  // state.nodes: a background refresh replaces every node object, and
+  // selection must never feed back into layout or persisted positions — only
+  // the one selected node gets a new object, everything else passes through.
+  const renderedNodes = useMemo(() => {
+    if (state.status !== 'ready') return []
+    if (!selectedWorkloadId) return state.nodes
+    return state.nodes.map((node) => (node.id === selectedWorkloadId ? { ...node, selected: true } : node))
+  }, [state, selectedWorkloadId])
+
   const renderedEdges = useMemo(() => {
     if (state.status !== 'ready') return []
-    if (!selectedFlowId) return state.edges
+    if (!selectedFlowId) {
+      if (!selectedWorkloadId) return state.edges
+      // A selected workload with no flow picked yet: its own flows stay at
+      // full strength and the rest recede, so the panel's lists are easy to
+      // trace on the graph.
+      return state.edges.map((edge) =>
+        edge.source === selectedWorkloadId || edge.target === selectedWorkloadId
+          ? edge
+          : { ...edge, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
+      )
+    }
     return state.edges.map((edge) =>
       edge.id === selectedFlowId
         ? {
             ...edge,
             selected: true,
             zIndex: 1,
+            // FloatingEdge's direction marks follow this stroke too.
             style: { ...edge.style, stroke: accentColor },
-            // The arrowhead is a separate SVG marker keyed by color, so it
-            // needs the accent color too or it stays muted.
-            markerEnd: { ...(edge.markerEnd as EdgeMarker), color: accentColor },
           }
         : { ...edge, selected: false, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
     )
-  }, [state, selectedFlowId, accentColor])
+  }, [state, selectedFlowId, selectedWorkloadId, accentColor])
 
   function toggleSelectedFlow(id: string) {
     setSelectedFlowId((prev) => (prev === id ? null : id))
   }
+
+  // The one entry point for selecting a workload — node click, keyboard
+  // (Enter/Space on a focused node), and later #77's search all go through
+  // it. A selected flow survives only if it belongs to the new workload.
+  function selectWorkload(id: string) {
+    setSelectedWorkloadId(id)
+    if (state.status !== 'ready') return
+    setSelectedFlowId((prev) => {
+      if (!prev) return prev
+      const flow = state.graph.edges.find((f) => flowId(f) === prev)
+      return flow && touchesWorkload(flow, id) ? prev : null
+    })
+  }
+
+  const clearSelection = useCallback(() => {
+    setSelectedWorkloadId(null)
+    setSelectedFlowId(null)
+  }, [])
+
+  function handleEdgeClick(_event: unknown, edge: Edge) {
+    toggleSelectedFlow(edge.id)
+    // Clicking a flow elsewhere on the graph leaves the workload's panel;
+    // one of its own flows keeps it open, with the flow detail beneath.
+    if (selectedWorkloadId && edge.source !== selectedWorkloadId && edge.target !== selectedWorkloadId) {
+      setSelectedWorkloadId(null)
+    }
+  }
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !event.defaultPrevented) clearSelection()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [clearSelection])
 
   // Conservative by construction: while /api/namespaces hasn't resolved yet
   // (or failed), this stays false, so a zero-node topology result renders as
@@ -461,10 +529,21 @@ function App() {
   // gets persisted, so a drag-in-progress doesn't hit storage every frame.
   // syncNamespaceBands keeps bands and workloads together on every change:
   // dragging a band moves its workloads, dragging a workload re-fits its band.
+  //
+  // Select changes never reach state.nodes: selection lives in
+  // selectedWorkloadId (see renderedNodes). A select:true — from a click
+  // (selectNodesOnDrag is off, so a drag never selects) or Enter/Space on a
+  // focused node — selects that workload; React Flow's select:false
+  // side-effects (pane or edge clicks) are ignored, since onPaneClick,
+  // handleEdgeClick and Escape already decide deselection explicitly.
   function handleNodesChange(changes: NodeChange[]) {
+    const selected = changes.findLast((change) => change.type === 'select' && change.selected)
+    if (selected && selected.type === 'select') selectWorkload(selected.id)
+    const layoutChanges = changes.filter((change) => change.type !== 'select')
+    if (layoutChanges.length === 0) return
     setState((prev) => {
       if (prev.status !== 'ready') return prev
-      const nodes = applyNodeChanges(changes, prev.nodes)
+      const nodes = applyNodeChanges(layoutChanges, prev.nodes)
       return { ...prev, nodes: syncNamespaceBands(prev.nodes, nodes) }
     })
   }
@@ -503,53 +582,72 @@ function App() {
   // across the next refresh.
   function handleRearrange() {
     if (state.status !== 'ready') return
-    const graph = state.graph
+    const { graph, fetchedAt } = state
     clearNodePositions(positionScope)
     layoutGraph(graph, bandArrangement, {}).then(({ nodes, edges, positions, routes }) => {
       nodePositionsRef.current = positionsToRecord(positions)
       edgeRoutesRef.current = routes
       saveNodePositions(positionScope, nodePositionsRef.current)
       saveEdgeRoutes(positionScope, routes)
-      setState({ status: 'ready', nodes, edges, graph })
+      setState({ status: 'ready', nodes, edges, graph, fetchedAt })
     })
   }
 
   return (
     <div className="app" data-theme={resolvedTheme} ref={appRef}>
+      {/* Four zones, left to right (issue #74): scope (which data), search,
+          view (how it's drawn + refresh), settings (app preferences). */}
       <header className="app__header">
         <span className="app__brand">
           <img className="app__logo" src="/logo.svg" alt="" width={24} height={24} />
-          KubeLynx
+          <span className="app__brand-name">KubeLynx</span>
         </span>
-        <NamespaceMultiSelect
-          namespaces={namespaces}
-          allValue={allNamespacesValue}
-          max={maxNamespaces}
-          selected={selectedNamespaces}
-          onChange={setSelectedNamespaces}
-        />
-        <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
-        <SourceSelector sources={sources} selected={source} onChange={setSource} />
-        <BandArrangementToggle selected={bandArrangement} onChange={handleBandArrangementChange} />
-        <button
-          type="button"
-          className="app__refresh-toggle"
-          onClick={handleRearrange}
-          disabled={state.status !== 'ready'}
-          title="Discard manually-placed positions and re-run auto-layout"
-        >
-          ⤢ Rearrange
-        </button>
-        <button
-          type="button"
-          className="app__refresh-toggle"
-          onClick={handleTogglePause}
-          aria-pressed={paused}
-        >
-          {paused ? '▶ Resume' : '⏸ Pause'}
-        </button>
-        <ThemeToggle selected={theme} onChange={handleThemeChange} />
-        {summary && <span className="app__summary">{summary}</span>}
+        <div className="app__zone app__zone--scope" role="group" aria-label="Data scope">
+          <NamespaceMultiSelect
+            namespaces={namespaces}
+            allValue={allNamespacesValue}
+            max={maxNamespaces}
+            selected={selectedNamespaces}
+            onChange={setSelectedNamespaces}
+          />
+          <SourceSelector sources={sources} selected={source} onChange={setSource} />
+          <ProtocolFilter protocols={protocols} selected={protocol} onChange={setProtocol} />
+        </div>
+        {/* Search slot, reserved for #77: empty (and zero-width) until then. */}
+        <div className="app__zone app__zone--search" />
+        {/* Quiet status line: what the current scope returned. */}
+        <span className="app__summary">{summary}</span>
+        <div className="app__zone app__zone--view" role="group" aria-label="View">
+          {/* Display ▾ (#76) mounts here, first in the zone, as a
+              <HeaderMenu label="Display"> like SettingsMenu. */}
+          <button
+            type="button"
+            className="header-control"
+            onClick={handleRearrange}
+            disabled={state.status !== 'ready'}
+            title="Discard manually-placed positions and re-run auto-layout"
+          >
+            Rearrange
+          </button>
+          <button
+            type="button"
+            className="header-control app__pause-toggle"
+            onClick={handleTogglePause}
+            aria-pressed={paused}
+            title={paused ? 'Resume automatic refresh' : 'Stop automatic refresh'}
+          >
+            {paused ? 'Resume' : 'Pause'}
+          </button>
+          <RefreshStatus updatedAt={state.status === 'ready' ? state.fetchedAt : null} paused={paused} />
+        </div>
+        <div className="app__zone app__zone--settings">
+          <SettingsMenu
+            theme={theme}
+            onThemeChange={handleThemeChange}
+            bandArrangement={bandArrangement}
+            onBandArrangementChange={handleBandArrangementChange}
+          />
+        </div>
       </header>
       <div className="app__body">
         <main className="app__canvas">
@@ -585,16 +683,17 @@ function App() {
           )}
           {state.status === 'ready' && state.nodes.length > 0 && (
             <ReactFlow
-              nodes={state.nodes}
+              nodes={renderedNodes}
               edges={renderedEdges}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               fitView
               proOptions={{ hideAttribution: true }}
+              selectNodesOnDrag={false}
               onNodesChange={handleNodesChange}
               onNodeDragStop={handleNodeDragStop}
-              onEdgeClick={(_, edge) => toggleSelectedFlow(edge.id)}
-              onPaneClick={() => setSelectedFlowId(null)}
+              onEdgeClick={handleEdgeClick}
+              onPaneClick={clearSelection}
             >
               <Background color="var(--rf-background-dot)" />
               <Controls showInteractive={false} />
@@ -615,11 +714,23 @@ function App() {
           onKeyDown={handleResizeKeyDown}
         />
         <aside className="app__flows-panel" style={{ width: flowsPanelWidth }}>
-          <FlowsTable
-            flows={state.status === 'ready' ? state.graph.edges : []}
-            selectedId={selectedFlowId}
-            onSelect={toggleSelectedFlow}
-          />
+          {selectedWorkloadId ? (
+            <WorkloadPanel
+              workloadId={selectedWorkloadId}
+              workload={selectedWorkload}
+              flows={state.status === 'ready' ? state.graph.edges : []}
+              source={source}
+              selectedFlowId={selectedFlowId}
+              onSelectFlow={toggleSelectedFlow}
+              onClose={() => setSelectedWorkloadId(null)}
+            />
+          ) : (
+            <FlowsTable
+              flows={state.status === 'ready' ? state.graph.edges : []}
+              selectedId={selectedFlowId}
+              onSelect={toggleSelectedFlow}
+            />
+          )}
           <FlowDetailPanel flow={selectedFlow} />
         </aside>
       </div>

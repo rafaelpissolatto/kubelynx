@@ -1,3 +1,7 @@
+import { useCallback, useRef, useState } from 'react'
+import { restoreFocus, useDismiss, type DismissReason } from '../lib/useDismiss'
+import { ChevronDown } from './HeaderMenu'
+
 interface NamespaceMultiSelectProps {
   namespaces: string[]
   allValue: string | null
@@ -18,6 +22,18 @@ export function NamespaceMultiSelect({
   selected,
   onChange,
 }: NamespaceMultiSelectProps) {
+  // <details> stays the element (native toggle on click/Enter/Space), but
+  // its open state is mirrored here so it closes like the other header
+  // menus: Escape, outside click, or tabbing away.
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDetailsElement>(null)
+  const summaryRef = useRef<HTMLElement>(null)
+  const dismiss = useCallback((reason: DismissReason) => {
+    setOpen(false)
+    restoreFocus(summaryRef.current, reason)
+  }, [])
+  useDismiss(rootRef, open, dismiss)
+
   const isAllSelected = allValue !== null && selected.includes(allValue)
   const allOptionAvailable = allValue !== null && namespaces.length <= max
 
@@ -50,9 +66,19 @@ export function NamespaceMultiSelect({
   }
 
   return (
-    <details className="namespace-multiselect">
-      <summary className="namespace-multiselect__summary" aria-label="Namespaces">
-        {summary}
+    <details
+      className="namespace-multiselect"
+      ref={rootRef}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary
+        ref={summaryRef}
+        className="header-control namespace-multiselect__summary"
+        aria-label={`Namespaces: ${summary}`}
+      >
+        <span className="namespace-multiselect__value">{summary}</span>
+        <ChevronDown />
       </summary>
       <div className="namespace-multiselect__panel">
         {allOptionAvailable && (

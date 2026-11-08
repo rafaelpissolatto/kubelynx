@@ -1,8 +1,19 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { BaseEdge, useInternalNode, useStore, getSmoothStepPath, type EdgeProps, type InternalNode } from '@xyflow/react'
 import { getEdgeParams } from '../lib/floatingEdge'
 import type { TrafficDots } from '../lib/layout'
-import { chooseRoute, placeRoute, roundedPolylinePath, type EdgeRoute, type Rect } from '../lib/edgeRoute'
+import {
+  chevronMark,
+  chooseRoute,
+  pathVertices,
+  placeRoute,
+  roundedPolylinePath,
+  targetMark,
+  type DirectionMark,
+  type EdgeRoute,
+  type KeepClear,
+  type Rect,
+} from '../lib/edgeRoute'
 
 // Corner radius for the elbow bend — larger than smoothstep's tiny default
 // so turns read as a deliberate curve rather than a sharp right angle.
@@ -13,6 +24,38 @@ const BORDER_RADIUS = 16
 const HOVER_HIT_WIDTH = 20
 
 const TRAFFIC_DOT_RADIUS = 3
+
+// Direction marks (issue #79): an open chevron mid-edge plus a slim open
+// arrowhead at the target, replacing the closed SVG marker. The closed head
+// was the only direction cue on a paused or static graph, and where edges
+// converge on a busy node those heads merged into one blob or hid behind
+// the box. Both shapes are open strokes in the edge's own color, drawn in
+// screen pixels (see DirectionMarks) with the tip at the local origin, pointing
+// along +x.
+const CHEVRON_PATH = 'M -3 -4 L 1 0 L -3 4'
+const ARROWHEAD_PATH = 'M -7 -3.5 L 0 0 L -7 3.5'
+const MARK_STROKE_WIDTH = 1.5
+// The chevron's half-length along the edge, and the space it keeps from
+// the label and from workload boxes, in screen pixels.
+const CHEVRON_HALF = 4
+const LABEL_GAP = 6
+const NODE_GAP = 3
+
+// Marks keep a constant on-screen size between these zoom levels, so they
+// stay crisp and legible on a zoomed-out "All namespaces" view without
+// turning into blobs when zoomed in. Outside the range they scale with the
+// graph like everything else, rather than dwarfing tiny nodes or vanishing
+// next to huge ones.
+const MARK_MIN_ZOOM = 0.6
+const MARK_MAX_ZOOM = 1.25
+
+// Rough size of the PROTOCOL :PORT label (React Flow's 10px edge text plus
+// labelBgPadding below), in flow units — close enough to keep the chevron
+// off it without measuring the DOM.
+function labelBox(label: unknown, x: number, y: number, scale: number): KeepClear | null {
+  if (typeof label !== 'string' || label === '') return null
+  return { x, y, halfWidth: label.length * 3 + 6, halfHeight: 9, gap: LABEL_GAP * scale }
+}
 
 // Label visibility (issue #37): the PROTOCOL :PORT label only renders while
 // its edge is hovered or selected, instead of always-on.
@@ -73,7 +116,93 @@ function routeIsLive(route: EdgeRoute, source: string, target: string, nodeLooku
   return chooseRoute([route], sourceNode.internals.positionAbsolute, targetNode.internals.positionAbsolute, obstacles) !== null
 }
 
-export function FloatingEdge({ id, source, target, markerEnd, style, label, selected, data }: EdgeProps) {
+// Boxes the chevron must stay clear of: the shown label, and every other
+// workload box. Edges are drawn beneath nodes, and the floating elbow is
+// obstacle-unaware, so a chevron placed where the edge runs behind a box
+// would simply be hidden.
+function keepClearBoxes(
+  nodeLookup: Map<string, InternalNode>,
+  source: string,
+  target: string,
+  label: KeepClear | null,
+  scale: number,
+): KeepClear[] {
+  const boxes: KeepClear[] = label ? [label] : []
+  for (const [id, node] of nodeLookup) {
+    if (id === source || id === target || node.type !== 'workload') continue
+    const halfWidth = (node.measured.width ?? 0) / 2
+    const halfHeight = (node.measured.height ?? 0) / 2
+    const { x, y } = node.internals.positionAbsolute
+    boxes.push({ x: x + halfWidth, y: y + halfHeight, halfWidth, halfHeight, gap: NODE_GAP * scale })
+  }
+  return boxes
+}
+
+function sameMark(a: DirectionMark | null, b: DirectionMark | null): boolean {
+  if (!a || !b) return a === b
+  return a.x === b.x && a.y === b.y && a.angle === b.angle
+}
+
+// Draws the chevron and target arrowhead for one edge. Its own component so
+// that only these two small paths re-render on zoom (they're sized in
+// screen pixels) or when a node moves onto the chevron's spot, not the
+// whole edge with its traffic dots.
+//
+// Color and opacity come from the edge's own style (accent recolor on a
+// selected flow, dimming of the rest) and the shared .react-flow__edge-path
+// rules, so every state the line has, the marks have too. They sit inside
+// the edge's <g>, so opacity applied to the edge as a whole also reaches
+// them. Drawn before BaseEdge so a shown label paints over them, never the
+// other way round.
+function DirectionMarks({
+  points,
+  source,
+  target,
+  edgeStyle,
+  label,
+}: {
+  points: { x: number; y: number }[]
+  source: string
+  target: string
+  edgeStyle: CSSProperties | undefined
+  label: { text: unknown; x: number; y: number } | null
+}) {
+  // Quantized so a zoom gesture re-renders these a bounded number of times.
+  const zoom = useStore((s) => Math.round(Math.min(MARK_MAX_ZOOM, Math.max(MARK_MIN_ZOOM, s.transform[2])) * 20) / 20)
+  const scale = 1 / zoom
+  // Computed inside the selector, with an equality check on the result, so
+  // panning or dragging unrelated nodes doesn't re-render anything.
+  const chevron = useStore(
+    (s) =>
+      points.length < 2
+        ? null
+        : chevronMark(
+            points,
+            BORDER_RADIUS,
+            CHEVRON_HALF * scale,
+            keepClearBoxes(s.nodeLookup, source, target, label && labelBox(label.text, label.x, label.y, scale), scale),
+          ),
+    sameMark,
+  )
+  const head = points.length < 2 ? null : targetMark(points)
+  const style: CSSProperties = { stroke: edgeStyle?.stroke, opacity: edgeStyle?.opacity, strokeWidth: MARK_STROKE_WIDTH }
+  const mark = (m: DirectionMark, d: string) => (
+    <path
+      d={d}
+      transform={`translate(${m.x} ${m.y}) rotate(${m.angle}) scale(${scale})`}
+      className="react-flow__edge-path flow-edge__direction"
+      style={style}
+    />
+  )
+  return (
+    <>
+      {chevron && mark(chevron, CHEVRON_PATH)}
+      {head && mark(head, ARROWHEAD_PATH)}
+    </>
+  )
+}
+
+export function FloatingEdge({ id, source, target, style, label, selected, data }: EdgeProps) {
   const [hovered, setHovered] = useState(false)
   const sourceNode = useInternalNode(source)
   const targetNode = useInternalNode(target)
@@ -99,6 +228,9 @@ export function FloatingEdge({ id, source, target, markerEnd, style, label, sele
 
   const showLabel = hovered || selected
   const trafficDots = data?.trafficDots as TrafficDots | null | undefined
+  // The elbow's corners, recovered from its path, so both geometries place
+  // their direction marks the same way.
+  const vertices = routePoints ?? pathVertices(path)
 
   return (
     <g onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
@@ -109,10 +241,16 @@ export function FloatingEdge({ id, source, target, markerEnd, style, label, sele
         strokeWidth={HOVER_HIT_WIDTH}
         className="react-flow__edge-interaction"
       />
+      <DirectionMarks
+        points={vertices}
+        source={source}
+        target={target}
+        edgeStyle={style}
+        label={showLabel ? { text: label, x: labelX, y: labelY } : null}
+      />
       <BaseEdge
         id={id}
         path={path}
-        markerEnd={markerEnd}
         style={style}
         label={showLabel ? label : undefined}
         labelX={showLabel ? labelX : undefined}
