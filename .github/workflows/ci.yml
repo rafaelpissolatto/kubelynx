@@ -56,11 +56,15 @@ jobs:
       - run: make lint-chart
 
   # amd64 only: catches Dockerfile breakage without the slow QEMU arm64 build,
-  # which only runs at release time.
+  # which only runs at release time. Then scans the image with Trivy
+  # (docs/security-scanning.md); SECURITY_TAB_UPLOAD is explained in
+  # security.yml.
   docker:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      security-events: write
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -68,6 +72,20 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: kubelynx:ci
           platforms: linux/amd64
           cache-from: type=gha,scope=kubelynx
           cache-to: type=gha,mode=max,scope=kubelynx
+      - run: make scan-image SCAN_IMAGE=kubelynx:ci
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scan-image
+          path: scan-reports/
+          if-no-files-found: ignore
+      - if: ${{ !cancelled() && vars.SECURITY_TAB_UPLOAD == 'true' && hashFiles('scan-reports/trivy-image.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: scan-reports/trivy-image.sarif
+          category: trivy-image

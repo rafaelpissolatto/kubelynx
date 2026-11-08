@@ -70,9 +70,13 @@ jobs:
   release:
     needs: version
     if: needs.version.outputs.tag != ''
+    # Must cover every permission release.yml's jobs request, or the call
+    # fails. security-events/actions: image scan SARIF upload (release.yml).
     permissions:
       contents: write
       packages: write
+      security-events: write
+      actions: read
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.version.outputs.tag }}
