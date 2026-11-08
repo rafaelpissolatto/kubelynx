@@ -52,6 +52,7 @@ import {
   loadNodePositions,
   saveNodePositions,
   clearNodePositions,
+  positionScopeKey,
   type NodePositionMap,
 } from './lib/nodePositions'
 
@@ -178,7 +179,7 @@ function App() {
   // truth for the accent color.
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT)
   const [bandArrangement, setBandArrangement] = useState<BandArrangement>(loadBandArrangement)
-  // Mirrors what's in localStorage for the current namespace scope (see
+  // Mirrors what's in localStorage for the current position scope (see
   // lib/nodePositions.ts) — read fresh whenever the namespace scope changes,
   // then kept in sync by every layout run and every drag so a "Rearrange"
   // or drag doesn't need to round-trip through storage to take effect.
@@ -284,18 +285,21 @@ function App() {
   }, [])
 
   const namespaceParam = selectedNamespaces.join(',')
+  // Persisted positions are per namespace scope *and* band arrangement (see
+  // positionScopeKey), so switching arrangement re-lays out (issue #51).
+  const positionScope = positionScopeKey(namespaceParam, bandArrangement)
 
   useEffect(() => {
     let cancelled = false
     setState({ status: 'loading' })
     setSelectedFlowId(null)
-    nodePositionsRef.current = loadNodePositions(namespaceParam)
+    nodePositionsRef.current = loadNodePositions(positionScope)
 
     loadTopology(namespaceParam, protocol, source, bandArrangement, nodePositionsRef.current)
       .then(({ positions, ...result }) => {
         if (cancelled) return
         nodePositionsRef.current = positionsToRecord(positions)
-        saveNodePositions(namespaceParam, nodePositionsRef.current)
+        saveNodePositions(positionScope, nodePositionsRef.current)
         setState({ status: 'ready', ...result })
       })
       .catch((err: unknown) => {
@@ -307,7 +311,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [namespaceParam, protocol, source, bandArrangement])
+  }, [namespaceParam, positionScope, protocol, source, bandArrangement])
 
   // A failed background refresh doesn't replace the last-rendered graph with
   // an error screen — it just logs and leaves the graph as-is; the
@@ -319,14 +323,14 @@ function App() {
         .then(({ positions, ...result }) => {
           if (cancelledRef.current) return
           nodePositionsRef.current = positionsToRecord(positions)
-          saveNodePositions(namespaceParam, nodePositionsRef.current)
+          saveNodePositions(positionScope, nodePositionsRef.current)
           setState({ status: 'ready', ...result })
         })
         .catch((err: unknown) => {
           console.error('background topology refresh failed', err)
         })
     },
-    [namespaceParam, protocol, source, bandArrangement],
+    [namespaceParam, positionScope, protocol, source, bandArrangement],
   )
 
   // Polls /api/topology on refreshIntervalMs while not paused, updating the
@@ -476,7 +480,7 @@ function App() {
       }
     }
     nodePositionsRef.current = { ...nodePositionsRef.current, ...positions }
-    saveNodePositions(namespaceParam, nodePositionsRef.current)
+    saveNodePositions(positionScope, nodePositionsRef.current)
   }
 
   // Discards every persisted position for the current namespace scope and
@@ -486,10 +490,10 @@ function App() {
   function handleRearrange() {
     if (state.status !== 'ready') return
     const graph = state.graph
-    clearNodePositions(namespaceParam)
+    clearNodePositions(positionScope)
     layoutGraph(graph, bandArrangement, {}).then(({ nodes, edges, positions }) => {
       nodePositionsRef.current = positionsToRecord(positions)
-      saveNodePositions(namespaceParam, nodePositionsRef.current)
+      saveNodePositions(positionScope, nodePositionsRef.current)
       setState({ status: 'ready', nodes, edges, graph })
     })
   }
