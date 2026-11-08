@@ -1,9 +1,8 @@
-import type { BandArrangement } from './bandArrangement'
 import type { EdgeRoute } from './edgeRoute'
 
 // Persists manually-dragged (and auto-anchored) node positions so a
 // background refresh or an unrelated filter change doesn't wipe out a
-// user's manual layout — see layoutGraph's reconciliation in lib/layout.ts.
+// user's manual layout — see finishLayout's reconciliation in lib/layout.ts.
 // Scoped per namespace selection and band arrangement (not protocol): the
 // same node id can legitimately appear in different namespace views, but the
 // protocol filter only changes which edges are shown, not the node set, so
@@ -21,8 +20,18 @@ function storageKey(scopeKey: string): string {
 // place so switching arrangement had no visible effect (issue #51). Keying by
 // arrangement too means a switch lays out fresh, while each arrangement
 // keeps its own manual tweaks for when the user switches back.
-export function positionScopeKey(namespaceKey: string, arrangement: BandArrangement): string {
-  return `${namespaceKey}|${arrangement}`
+//
+// `arrangementKey` is LayoutPlan.arrangementKey (lib/layout.ts): the explicit
+// 'vertical' / 'horizontal' as before, but for 'auto' with several
+// namespaces the shape it resolved to ('auto:rows4', 'auto:vertical', …).
+// Since issue #81 'auto' resolves from the canvas's size and aspect, so the
+// same scope can come out as a different grid on another screen; each shape
+// keeps its own positions instead of a 4-row grid inheriting coordinates
+// dragged on a single strip. Positions saved under the bare pre-#81
+// '<scope>|auto' key were laid out for the old strip/stack and are simply
+// no longer read for multi-namespace views.
+export function positionScopeKey(namespaceKey: string, arrangementKey: string): string {
+  return `${namespaceKey}|${arrangementKey}`
 }
 
 // localStorage access is wrapped in try/catch for the same reason as

@@ -1,7 +1,8 @@
 // How layoutSwimlanes (lib/layout.ts) arranges namespace bands when more
-// than one namespace is in view. 'auto' is resolved down to 'vertical' or
-// 'horizontal' inside layoutGraph, based on namespace count and viewport
-// height — see resolveBandArrangement there.
+// than one namespace is in view. 'auto' is resolved to a concrete shape — a
+// vertical stack, a horizontal strip or a wrapped grid — from the bands' real
+// sizes and the canvas's size and aspect ratio: see resolveBandShape in
+// lib/bandPacking.ts.
 export type BandArrangement = 'vertical' | 'horizontal' | 'auto'
 
 export const BAND_ARRANGEMENTS: BandArrangement[] = ['vertical', 'horizontal', 'auto']

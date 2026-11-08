@@ -727,6 +727,33 @@ body,
   white-space: nowrap;
 }
 
+/* Semantic zoom (issue #81, components/ZoomControls.tsx). Below the zoom at
+   which 13px names would drop under 11px on screen, the canvas goes
+   compact: kind and port badges (unreadable at that size anyway, and still
+   in the Workload panel) are dropped, and the name is held at 11px on
+   screen, centred in the box and allowed a second line. The box itself
+   keeps its laid-out size, so nothing moves. */
+.app__canvas[data-detail='compact'] .workload-node {
+  align-content: center;
+  padding: 4px 10px;
+}
+
+.app__canvas[data-detail='compact'] .workload-node__badge,
+.app__canvas[data-detail='compact'] .workload-node__ports {
+  display: none;
+}
+
+.app__canvas[data-detail='compact'] .workload-node__name {
+  font-size: calc(11px / var(--zoom, 1));
+  line-height: 1.15;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
 /* Selected and keyboard-focused workloads (issue #75). Box-shadow and
    outline rather than a wider border, so the node's box never changes size
    (see the geometry note on .workload-node above). React Flow's own
@@ -1298,7 +1325,13 @@ body,
   position: absolute;
   top: 8px;
   left: 12px;
-  font-size: 11px;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Never below 11px on screen when zoomed out (issue #81); --zoom comes
+     from SemanticZoom. Scales normally when zoomed in. */
+  font-size: calc(11px / min(var(--zoom, 1), 1));
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;

@@ -2,6 +2,7 @@ import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js'
 import type { Edge, Node } from '@xyflow/react'
 import { flowId, type Flow, type Graph, type Workload } from './topology'
 import type { BandArrangement } from './bandArrangement'
+import { bandShapeKey, placeBands, resolveBandShape, type BandShape, type Size } from './bandPacking'
 import type { NodePositionMap } from './nodePositions'
 import { chooseRoute, type EdgeRoute, type Rect } from './edgeRoute'
 
@@ -123,25 +124,6 @@ const BAND_GAP = 48
 const BAND_PADDING_X = 24
 const BAND_PADDING_BOTTOM = 24
 const BAND_HEADER_HEIGHT = 40
-
-type ResolvedBandArrangement = 'vertical' | 'horizontal'
-
-// 'auto' picks horizontal once stacking every band's *actual* height (from
-// its own ELK sub-layout — see layoutSwimlanes) would need more vertical
-// space than the viewport gives it, so the common case (a handful of small
-// namespaces) stays vertical while either many namespaces or a few
-// workload-heavy ones avoid forcing excessive scrolling. Deciding this from
-// real band heights, rather than a fixed per-namespace guess, means a
-// namespace with unusually many workloads is correctly weighted too.
-function resolveBandArrangement(
-  arrangement: BandArrangement,
-  bandHeights: number[],
-  viewportHeight: number,
-): ResolvedBandArrangement {
-  if (arrangement !== 'auto') return arrangement
-  const stackedHeight = bandHeights.reduce((sum, height) => sum + height + BAND_GAP, 0)
-  return stackedHeight > viewportHeight ? 'horizontal' : 'vertical'
-}
 
 // Log scale so a handful of a unit and a few thousand don't look identical —
 // null when there's no traffic to compare against (maxRate <= 0). Scales
@@ -363,122 +345,128 @@ function reconcilePositions(
   return final
 }
 
-async function layoutFlat(
-  graph: Graph,
-  knownPositions: NodePositionMap,
-  knownRoutes: Map<string, EdgeRoute>,
-): Promise<LayoutResult> {
-  const ports = workloadPorts(graph)
-  const sizes = workloadSizes(graph, ports)
-  const elkGraph = {
-    id: 'root',
+function elkSubgraph(id: string, workloads: Workload[], flows: Flow[], sizes: Map<string, Size>): ElkNode {
+  return {
+    id,
     layoutOptions: elkLayoutOptions,
-    children: graph.nodes.map((n) => ({ id: n.id, ...sizes.get(n.id)! })),
-    edges: graph.edges.map((e) => ({
+    children: workloads.map((n) => ({ id: n.id, ...sizes.get(n.id)! })),
+    edges: flows.map((e) => ({
       id: flowId(e),
       sources: [e.source],
       targets: [e.target],
     })),
   }
-
-  const layout = await elk.layout(elkGraph)
-  const routes = new Map<string, EdgeRoute>()
-  collectRoutes(layout, { x: 0, y: 0 }, routes)
-
-  const autoPositions = new Map<string, { x: number; y: number }>()
-  for (const child of layout.children ?? []) {
-    autoPositions.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 })
-  }
-
-  const positions = reconcilePositions(graph, autoPositions, knownPositions)
-
-  const nodes: Node<WorkloadNodeData>[] = graph.nodes.map((workload) => ({
-    id: workload.id,
-    type: 'workload',
-    position: positions.get(workload.id) ?? { x: 0, y: 0 },
-    style: { ...sizes.get(workload.id)! },
-    data: { workload, ports: ports.get(workload.id) ?? [] },
-  }))
-
-  const selected = selectRoutes(graph, routes, knownRoutes, positions, sizes)
-  return { nodes, edges: buildEdges(graph, selected), positions, routes: selected }
 }
 
-// layoutSwimlanes lays out each namespace's workloads independently, then
-// arranges the resulting bands either stacked vertically or side by side
-// horizontally. Cross-namespace edges are still rendered — React Flow draws
-// them from each node's absolute position regardless of which band it
-// belongs to — they just aren't a factor in intra-band node placement.
-//
-// Runs in two passes: first every namespace's own ELK sub-layout (needed to
-// know each band's real size), then — only once those real sizes are known —
-// 'auto' picks vertical or horizontal and positions are assigned. Deciding
-// the arrangement before laying anything out would mean guessing at sizes
-// ELK hasn't computed yet.
-async function layoutSwimlanes(
+type BandLayout = { namespace: string; layout: ElkNode; width: number; height: number }
+
+// Everything layout needs that depends only on the graph and the canvas —
+// the ELK runs and, with several namespaces, the band shape — but not yet on
+// any persisted positions. Split from finishLayout because the persisted
+// positions to reconcile against are keyed by the resolved shape (see
+// arrangementKey and positionScopeKey), which only exists once every band's
+// real size is known.
+export type LayoutPlan = {
+  graph: Graph
+  ports: Map<string, string[]>
+  sizes: Map<string, Size>
+  // What persisted positions are keyed by (positionScopeKey): the explicit
+  // arrangement, or for 'auto' with several namespaces the shape it
+  // resolved to ('auto:rows3', …), since positions laid out for one shape
+  // are meaningless in another.
+  arrangementKey: string
+  // bandShapeKey of the resolved shape (null for a single namespace) — the
+  // next refresh's `preferredShape`.
+  shapeKey: string | null
+} & ({ kind: 'flat'; layout: ElkNode } | { kind: 'swimlanes'; bands: BandLayout[]; shape: BandShape })
+
+// `canvas` is the graph pane's size in screen pixels; 'auto' picks the band
+// shape that fits it best (resolveBandShape). `preferredShape` is the shape
+// currently on screen, kept on a refresh unless it has become clearly worse.
+export async function planLayout(
   graph: Graph,
-  namespaces: string[],
-  arrangement: BandArrangement,
-  viewportHeight: number,
-  knownPositions: NodePositionMap,
-  knownRoutes: Map<string, EdgeRoute>,
-): Promise<LayoutResult> {
-  const namespaceLayouts: { namespace: string; layout: ElkNode; width: number; height: number }[] = []
+  bandArrangement: BandArrangement,
+  canvas: Size,
+  preferredShape: string | null = null,
+): Promise<LayoutPlan> {
   const ports = workloadPorts(graph)
   const sizes = workloadSizes(graph, ports)
+  const namespaces = Array.from(new Set(graph.nodes.map((n) => n.namespace))).sort()
 
+  if (namespaces.length <= 1) {
+    const layout = await elk.layout(elkSubgraph('root', graph.nodes, graph.edges, sizes))
+    return { kind: 'flat', graph, ports, sizes, layout, arrangementKey: bandArrangement, shapeKey: null }
+  }
+
+  // Each namespace gets its own ELK sub-layout first (needed to know each
+  // band's real size); only then is the band shape resolved. Cross-namespace
+  // edges are still rendered — React Flow draws them from each node's
+  // absolute position — they just don't affect intra-band placement.
+  const bands: BandLayout[] = []
   for (const namespace of namespaces) {
     const nsNodes = graph.nodes.filter((n) => n.namespace === namespace)
     const nsNodeIds = new Set(nsNodes.map((n) => n.id))
     const nsEdges = graph.edges.filter((e) => nsNodeIds.has(e.source) && nsNodeIds.has(e.target))
-
-    const elkGraph: ElkNode = {
-      id: namespace,
-      layoutOptions: elkLayoutOptions,
-      children: nsNodes.map((n) => ({ id: n.id, ...sizes.get(n.id)! })),
-      edges: nsEdges.map((e) => ({
-        id: flowId(e),
-        sources: [e.source],
-        targets: [e.target],
-      })),
-    }
-    const layout = await elk.layout(elkGraph)
-
-    const contentWidth = layout.width ?? NODE_WIDTH
-    const contentHeight = layout.height ?? NODE_HEIGHT
-    namespaceLayouts.push({
+    const layout = await elk.layout(elkSubgraph(namespace, nsNodes, nsEdges, sizes))
+    bands.push({
       namespace,
       layout,
-      width: contentWidth + BAND_PADDING_X * 2,
-      height: BAND_HEADER_HEIGHT + contentHeight + BAND_PADDING_BOTTOM,
+      width: (layout.width ?? NODE_WIDTH) + BAND_PADDING_X * 2,
+      height: BAND_HEADER_HEIGHT + (layout.height ?? NODE_HEIGHT) + BAND_PADDING_BOTTOM,
     })
   }
 
-  const resolvedArrangement = resolveBandArrangement(
-    arrangement,
-    namespaceLayouts.map((n) => n.height),
-    viewportHeight,
-  )
+  const shape = resolveBandShape(bandArrangement, bands, canvas, BAND_GAP, preferredShape)
+  const shapeKey = bandShapeKey(shape)
+  return {
+    kind: 'swimlanes',
+    graph,
+    ports,
+    sizes,
+    bands,
+    shape,
+    shapeKey,
+    arrangementKey: bandArrangement === 'auto' ? `auto:${shapeKey}` : bandArrangement,
+  }
+}
 
+// knownPositions carries forward previously-persisted (dragged or
+// already-anchored) node positions so a refresh reuses them instead of
+// re-running full auto-layout — see reconcilePositions. The returned
+// `positions` map is every workload's final position, ready to be persisted
+// as the new baseline for the next call (App.tsx does this via
+// lib/nodePositions.ts). knownRoutes does the same for edge routes: the
+// previous call's `routes`, so an edge keeps the route that still fits its
+// persisted endpoints when ELK's fresh one doesn't (see selectRoutes). A
+// from-scratch layout (Rearrange) passes neither.
+export function finishLayout(
+  plan: LayoutPlan,
+  knownPositions: NodePositionMap = {},
+  knownRoutes: Map<string, EdgeRoute> = new Map(),
+): LayoutResult {
+  const { graph, ports, sizes } = plan
   const autoPositions = new Map<string, { x: number; y: number }>()
   const routes = new Map<string, EdgeRoute>()
   const bands: { namespace: string; x: number; y: number; width: number; height: number }[] = []
 
-  let offset = 0
-  for (const { namespace, layout, width, height } of namespaceLayouts) {
-    const bandX = resolvedArrangement === 'horizontal' ? offset : 0
-    const bandY = resolvedArrangement === 'horizontal' ? 0 : offset
-
-    collectRoutes(layout, { x: BAND_PADDING_X + bandX, y: BAND_HEADER_HEIGHT + bandY }, routes)
-    for (const child of layout.children ?? []) {
-      autoPositions.set(child.id, {
-        x: (child.x ?? 0) + BAND_PADDING_X + bandX,
-        y: (child.y ?? 0) + BAND_HEADER_HEIGHT + bandY,
-      })
+  if (plan.kind === 'flat') {
+    collectRoutes(plan.layout, { x: 0, y: 0 }, routes)
+    for (const child of plan.layout.children ?? []) {
+      autoPositions.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 })
     }
-
-    bands.push({ namespace, x: bandX, y: bandY, width, height })
-    offset += (resolvedArrangement === 'horizontal' ? width : height) + BAND_GAP
+  } else {
+    const { origins } = placeBands(plan.bands, plan.shape, BAND_GAP)
+    plan.bands.forEach(({ namespace, layout, width, height }, i) => {
+      const { x: bandX, y: bandY } = origins[i]
+      collectRoutes(layout, { x: BAND_PADDING_X + bandX, y: BAND_HEADER_HEIGHT + bandY }, routes)
+      for (const child of layout.children ?? []) {
+        autoPositions.set(child.id, {
+          x: (child.x ?? 0) + BAND_PADDING_X + bandX,
+          y: (child.y ?? 0) + BAND_HEADER_HEIGHT + bandY,
+        })
+      }
+      bands.push({ namespace, x: bandX, y: bandY, width, height })
+    })
   }
 
   const positions = reconcilePositions(graph, autoPositions, knownPositions)
@@ -554,7 +542,7 @@ function nodeRect(node: Node): Rect {
 
 // Keeps namespace bands and their workloads consistent after React Flow
 // applies a batch of node changes (App.tsx's onNodesChange), without
-// re-running layoutGraph:
+// re-running layout:
 // - a band that moved carries its workloads along by the same delta, so a
 //   namespace can be dragged as one block;
 // - a band whose workload was dragged is re-fitted tightly around its
@@ -619,26 +607,4 @@ export type LayoutResult = {
   // plus known routes of edges not in this graph — the next call's
   // knownRoutes.
   routes: Map<string, EdgeRoute>
-}
-
-// knownPositions carries forward previously-persisted (dragged or
-// already-anchored) node positions so a refresh reuses them instead of
-// re-running full auto-layout — see reconcilePositions. The returned
-// `positions` map is every workload's final position, ready to be persisted
-// as the new baseline for the next call (App.tsx does this via
-// lib/nodePositions.ts). knownRoutes does the same for edge routes: the
-// previous call's `routes`, so an edge keeps the route that still fits its
-// persisted endpoints when ELK's fresh one doesn't (see selectRoutes). A
-// from-scratch layout (Rearrange) passes neither.
-export async function layoutGraph(
-  graph: Graph,
-  bandArrangement: BandArrangement = 'auto',
-  knownPositions: NodePositionMap = {},
-  knownRoutes: Map<string, EdgeRoute> = new Map(),
-): Promise<LayoutResult> {
-  const namespaces = Array.from(new Set(graph.nodes.map((n) => n.namespace))).sort()
-  if (namespaces.length <= 1) {
-    return layoutFlat(graph, knownPositions, knownRoutes)
-  }
-  return layoutSwimlanes(graph, namespaces, bandArrangement, window.innerHeight, knownPositions, knownRoutes)
 }
