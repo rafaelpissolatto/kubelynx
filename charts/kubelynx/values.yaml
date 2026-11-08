@@ -33,6 +33,14 @@ prometheus:
 # How often the UI polls for fresh topology (a Go duration, e.g. 15s, 1m).
 refreshInterval: 15s
 
+# When the UI's namespace picker shows a non-blocking "large graphs may render
+# slowly" warning (--namespace-warn-threshold): once at least this many
+# namespaces from different prefix groups are selected (the group is the part
+# before the first "-", so team-a-dev and team-b-prod are one group), or
+# "All namespaces" on a cluster with at least this many. A whole number;
+# 0 turns the warning off. Selections are never capped.
+namespaceWarnThreshold: 6
+
 # Port-cardinality and protocol-filter tuning. Both are optional; leave them
 # empty to keep the binary's built-in defaults. Each one is rendered into a
 # chart-managed ConfigMap (plain, non-secret data), mounted as a directory and

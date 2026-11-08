@@ -28,6 +28,10 @@ body,
      as one purple identity with the accented selection. */
   --edge-stroke: #7d6fae;
   --danger: #f28b82;
+  /* Non-blocking warnings, e.g. the broad namespace selection banner. */
+  --warning: #f2c46b;
+  --warning-surface: rgba(242, 196, 107, 0.1);
+  --warning-border: rgba(242, 196, 107, 0.35);
   --badge-text: #b3b3c6;
   --namespace-band-tint: rgba(255, 255, 255, 0.02);
   --rf-background-dot: #2a2a38;
@@ -60,6 +64,9 @@ body,
   --accent-border-muted: #c9b8f6;
   --edge-stroke: #9587c4;
   --danger: #c0392b;
+  --warning: #7a4f00;
+  --warning-surface: #fff4dc;
+  --warning-border: #f0d49a;
   --badge-text: #55566b;
   --namespace-band-tint: rgba(0, 0, 0, 0.03);
   --rf-background-dot: #cfd0dc;
@@ -330,11 +337,110 @@ body,
 
 .namespace-multiselect__panel {
   display: grid;
-  gap: 4px;
-  min-width: 200px;
-  max-height: 320px;
-  overflow-y: auto;
+  /* minmax(0, …): otherwise the filter input's intrinsic width stretches
+     the column and pushes "Select all matching" past the panel edge. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  width: 280px;
+  box-sizing: border-box;
   padding: 8px;
+}
+
+/* Filter + "Select all matching" and the warning stay put; only the
+   checkbox list scrolls, so the banner never scrolls out of view while the
+   user is toggling namespaces further down. */
+.namespace-multiselect__tools {
+  display: flex;
+  gap: 6px;
+}
+
+.app__header .namespace-multiselect__filter {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-deep);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+}
+
+.namespace-multiselect__filter::placeholder {
+  color: var(--text-placeholder);
+}
+
+.namespace-multiselect__select-matching {
+  flex: none;
+  height: 26px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--accent-border-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.namespace-multiselect__select-matching:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.namespace-multiselect__select-matching:disabled {
+  color: var(--text-disabled);
+  border-color: var(--border-strong);
+  cursor: not-allowed;
+}
+
+.namespace-multiselect__warning-region:empty {
+  display: none;
+}
+
+.namespace-multiselect__warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 4px 6px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--warning);
+  background: var(--warning-surface);
+  border: 1px solid var(--warning-border);
+  border-radius: 6px;
+}
+
+.namespace-multiselect__warning > span {
+  flex: 1;
+}
+
+.namespace-multiselect__warning-dismiss {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.namespace-multiselect__warning-dismiss:hover {
+  background: var(--warning-border);
+}
+
+.namespace-multiselect__list {
+  display: grid;
+  gap: 4px;
+  max-height: 280px;
+  overflow-y: auto;
 }
 
 .namespace-multiselect__option {
@@ -348,11 +454,6 @@ body,
 
 .namespace-multiselect__option:hover {
   background: var(--surface-hover);
-}
-
-.namespace-multiselect__option[aria-disabled='true'] {
-  color: var(--text-disabled);
-  cursor: not-allowed;
 }
 
 .namespace-multiselect__hint,
@@ -568,6 +669,19 @@ body,
   .namespace-multiselect {
     order: 1;
     min-width: 0;
+  }
+
+  /* The picker isn't at the left edge on phones, so a picker-anchored panel
+     would overflow. Pin it to the viewport's 16px gutters instead; top: auto
+     keeps its static position, i.e. just below the summary. */
+  .namespace-multiselect__panel {
+    position: fixed;
+    top: auto;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-width: none;
+    margin-top: 6px;
   }
 
   .app__zone--settings {

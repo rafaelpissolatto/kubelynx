@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	promapi "github.com/prometheus/client_golang/api"
@@ -44,7 +45,6 @@ func TestNamespacesHandler_ReturnsSortedNamespaces(t *testing.T) {
 	var resp struct {
 		Namespaces []string `json:"namespaces"`
 		All        string   `json:"all"`
-		Max        int      `json:"max"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decoding response: %v", err)
@@ -61,8 +61,9 @@ func TestNamespacesHandler_ReturnsSortedNamespaces(t *testing.T) {
 	if resp.All != topology.AllNamespaces {
 		t.Errorf("All = %q, want %q", resp.All, topology.AllNamespaces)
 	}
-	if resp.Max != topology.MaxNamespaces {
-		t.Errorf("Max = %d, want %d", resp.Max, topology.MaxNamespaces)
+	// No selection cap any more (issue #86): the UI warns instead.
+	if strings.Contains(rec.Body.String(), `"max"`) {
+		t.Errorf("response still carries a max cap: %s", rec.Body.String())
 	}
 }
 

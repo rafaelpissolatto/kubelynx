@@ -91,7 +91,7 @@ const edgeTypes = { floating: FloatingEdge }
 
 // 'unreachable' (a 502 from TopologyHandler: BuildTopology couldn't complete
 // its Prometheus query) and 'invalid' (a 400: the request itself was
-// rejected, e.g. too many namespaces) get visually and textually distinct
+// rejected, e.g. an invalid protocol) get visually and textually distinct
 // treatment — conflating either with a plain empty graph, or with each
 // other, hides genuinely different problems behind one generic message.
 type ErrorKind = 'unreachable' | 'invalid' | 'unknown'
@@ -134,7 +134,7 @@ async function loadTopology(
 // Status codes TopologyHandler (internal/api/topology.go) responds with:
 // 502 when BuildTopology itself failed (Prometheus unreachable, or a query
 // it ran failed), 400 when the request was rejected before querying at all
-// (too many namespaces, an invalid protocol).
+// (an invalid protocol or source).
 const HTTP_BAD_REQUEST = 400
 const HTTP_BAD_GATEWAY = 502
 
@@ -159,11 +159,12 @@ function App() {
   // that the current namespace/protocol selection has no traffic right now.
   const [namespacesLoaded, setNamespacesLoaded] = useState(false)
   // The "all namespaces" sentinel value /api/topology?namespace= accepts,
-  // and the cap on simultaneously selected namespaces it enforces — both
-  // sourced from /api/namespaces rather than hardcoded, so the frontend
-  // never has to agree on these values with the backend independently.
+  // sourced from /api/namespaces rather than hardcoded.
   const [allNamespacesValue, setAllNamespacesValue] = useState<string | null>(null)
-  const [maxNamespaces, setMaxNamespaces] = useState(1)
+  // When the namespace picker warns about a broad selection (issue #86),
+  // from /api/config (--namespace-warn-threshold). 0 (off) until it loads,
+  // so the UI never hardcodes a threshold of its own.
+  const [namespaceWarnThreshold, setNamespaceWarnThreshold] = useState(0)
   const [protocols, setProtocols] = useState<ProtocolFilterValue[]>([DEFAULT_PROTOCOL])
   const [protocol, setProtocol] = useState<ProtocolFilterValue>(() => {
     return new URLSearchParams(window.location.search).get('protocol') || DEFAULT_PROTOCOL
@@ -256,15 +257,19 @@ function App() {
   }, [resolvedTheme])
 
   useEffect(() => {
-    if (refreshIntervalOverrideMs !== null) return
     let cancelled = false
 
     fetchConfig()
       .then((res) => {
-        if (!cancelled && res.refreshIntervalMs > 0) setRefreshIntervalMs(res.refreshIntervalMs)
+        if (cancelled) return
+        if (refreshIntervalOverrideMs === null && res.refreshIntervalMs > 0) {
+          setRefreshIntervalMs(res.refreshIntervalMs)
+        }
+        if (res.namespaceWarnThreshold > 0) setNamespaceWarnThreshold(res.namespaceWarnThreshold)
       })
       .catch((err) => {
-        // Not worth an error state: polling just keeps the built-in default.
+        // Not worth an error state: polling keeps the built-in default and
+        // the namespace warning stays off.
         console.error('loading /api/config failed', err)
       })
 
@@ -296,7 +301,6 @@ function App() {
         if (!cancelled) {
           setNamespaces(res.namespaces)
           setAllNamespacesValue(res.all)
-          setMaxNamespaces(res.max)
           setNamespacesLoaded(true)
         }
       })
@@ -734,7 +738,7 @@ function App() {
           <NamespaceMultiSelect
             namespaces={namespaces}
             allValue={allNamespacesValue}
-            max={maxNamespaces}
+            warnThreshold={namespaceWarnThreshold}
             selected={selectedNamespaces}
             onChange={setSelectedNamespaces}
           />

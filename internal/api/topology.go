@@ -18,10 +18,10 @@ const DefaultNamespace = "default"
 
 // TopologyHandler serves GET /api/topology?namespace=<ns>[,<ns>...]&protocol=<p>&source=<s>,
 // returning the topology.Graph JSON shape scoped to the requested
-// namespaces, protocol, and telemetry source. More than
-// topology.MaxNamespaces namespaces (topology.AllNamespaces excepted) is
-// rejected — a request that large risks a graph too big for the browser to
-// lay out and render. protocol defaults to topology.ProtocolAll and must
+// namespaces, protocol, and telemetry source. There's no cap on how many
+// namespaces a request may name (issue #86): topology.AllNamespaces already
+// fetches everything, and the UI warns about broad selections instead (see
+// --namespace-warn-threshold). protocol defaults to topology.ProtocolAll and must
 // otherwise be one of topology.ValidProtocols; classes governs how
 // topology.ProtocolHTTP and topology.ProtocolGRPC are recognized (see
 // topology.ProtocolClasses). cardinality governs which TCP ports get
@@ -31,11 +31,6 @@ const DefaultNamespace = "default"
 func TopologyHandler(prom promv1.API, classes topology.ProtocolClasses, cardinality topology.PortCardinality) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		namespaces := parseNamespaces(r.URL.Query().Get("namespace"))
-
-		if !topology.IsAllNamespaces(namespaces) && len(namespaces) > topology.MaxNamespaces {
-			http.Error(w, fmt.Sprintf("too many namespaces requested (max %d)", topology.MaxNamespaces), http.StatusBadRequest)
-			return
-		}
 
 		protocol := parseProtocol(r.URL.Query().Get("protocol"))
 		if !topology.IsValidProtocol(protocol) {

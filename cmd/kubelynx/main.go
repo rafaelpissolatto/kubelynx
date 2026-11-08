@@ -25,6 +25,7 @@ func main() {
 		protocolPortsFile         = flag.String("protocol-ports-file", "", `path to a JSON file overriding the default HTTP/gRPC port classification used by the protocol filter, e.g. {"http":["8081"],"grpc":["50052"]}; omit to use the built-in defaults`)
 		tcpPortAllowlistFile      = flag.String("tcp-port-allowlist-file", "", `path to a JSON file overriding the default TCP "known ports" allow-list used to bound port cardinality, e.g. {"tcp":["80","443","8080"]}; TCP ports outside this list (and UDP ports other than 53/DNS) are aggregated into a single "multiple" flow instead of one per port; omit to use the built-in defaults`)
 		refreshInterval           = flag.Duration("refresh-interval", 15*time.Second, "how often the UI polls /api/topology; served to the frontend via /api/config (a ?refreshInterval=<ms> URL param still overrides it)")
+		namespaceWarnThreshold    = flag.Int("namespace-warn-threshold", 6, "how many namespaces from different prefix groups (the part before the first \"-\"), or \"All namespaces\" on a cluster with at least this many, the UI's namespace picker accepts before showing a non-blocking \"may render slowly\" warning; served to the frontend via /api/config; 0 disables the warning")
 	)
 	flag.Parse()
 
@@ -32,6 +33,10 @@ func main() {
 	// the UI as 0 and be silently ignored.
 	if *refreshInterval < time.Millisecond {
 		slog.Error("invalid refresh interval", "refresh_interval", *refreshInterval)
+		os.Exit(1)
+	}
+	if *namespaceWarnThreshold < 0 {
+		slog.Error("invalid namespace warn threshold; must be 0 (off) or positive", "namespace_warn_threshold", *namespaceWarnThreshold)
 		os.Exit(1)
 	}
 
@@ -63,7 +68,7 @@ func main() {
 	mux.HandleFunc("/api/namespaces", api.NamespacesHandler(prom))
 	mux.HandleFunc("/api/protocols", api.ProtocolsHandler())
 	mux.HandleFunc("/api/sources", api.SourcesHandler(prom))
-	mux.HandleFunc("/api/config", api.ConfigHandler(*refreshInterval))
+	mux.HandleFunc("/api/config", api.ConfigHandler(*refreshInterval, *namespaceWarnThreshold))
 	// Liveness/readiness only: deliberately doesn't touch Prometheus, whose
 	// outages the UI already reports rather than restarting the pod over.
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -73,7 +78,7 @@ func main() {
 	mux.Handle("/", api.UIHandler(assets, uiEmbedded))
 
 	slog.Info("kubelynx listening", "addr", *listenAddr, "prometheus", prom.RedactedURL(), "prometheus_auth", prom.AuthMode(),
-		"refresh_interval", *refreshInterval, "ui_embedded", uiEmbedded)
+		"refresh_interval", *refreshInterval, "namespace_warn_threshold", *namespaceWarnThreshold, "ui_embedded", uiEmbedded)
 	if err := http.ListenAndServe(*listenAddr, mux); err != nil {
 		slog.Error("server exited", "error", err)
 		os.Exit(1)
