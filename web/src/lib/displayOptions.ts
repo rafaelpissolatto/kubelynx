@@ -30,6 +30,11 @@ export interface DisplayOptions {
   namespaceBands: boolean
   // React Flow's overview minimap in the canvas corner (issue #81).
   minimap: boolean
+  // Issue #90: dashed/dash-dot styling plus a glyph on Istio flows that were
+  // plaintext or mixed. Off draws those edges plainly; the mTLS lock badge
+  // stays either way (see edgeSecurityVariant in lib/flowSecurity.ts). Has no
+  // effect on Beyla, whose flows carry no security value.
+  highlightPlaintext: boolean
 }
 
 // Matches how the graph looked before Display ▾ existed.
@@ -39,6 +44,7 @@ export const DEFAULT_DISPLAY_OPTIONS: DisplayOptions = {
   lowTrafficCutoff: 0,
   namespaceBands: true,
   minimap: false,
+  highlightPlaintext: true,
 }
 
 const STORAGE_KEY = 'kubelynx.display'
@@ -58,6 +64,7 @@ function parse(raw: string): DisplayOptions {
       : d.lowTrafficCutoff,
     namespaceBands: typeof v.namespaceBands === 'boolean' ? v.namespaceBands : d.namespaceBands,
     minimap: typeof v.minimap === 'boolean' ? v.minimap : d.minimap,
+    highlightPlaintext: typeof v.highlightPlaintext === 'boolean' ? v.highlightPlaintext : d.highlightPlaintext,
   }
 }
 
@@ -116,7 +123,10 @@ export function edgeLabelText(flow: Flow, mode: EdgeLabelMode): string | undefin
 
 // The per-edge options FloatingEdge reads; provided around <ReactFlow> in
 // App.tsx so a change re-renders edges without rebuilding edge objects.
-export const EdgeDisplayContext = createContext<Pick<DisplayOptions, 'edgeLabels' | 'trafficAnimation'>>({
+export type EdgeDisplayOptions = Pick<DisplayOptions, 'edgeLabels' | 'trafficAnimation' | 'highlightPlaintext'>
+
+export const EdgeDisplayContext = createContext<EdgeDisplayOptions>({
   edgeLabels: DEFAULT_DISPLAY_OPTIONS.edgeLabels,
   trafficAnimation: DEFAULT_DISPLAY_OPTIONS.trafficAnimation,
+  highlightPlaintext: DEFAULT_DISPLAY_OPTIONS.highlightPlaintext,
 })

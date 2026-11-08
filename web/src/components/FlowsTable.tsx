@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import { flowId, type Flow } from '../lib/topology'
 import { formatRate } from '../lib/format'
 import { matchesFlowFilter } from '../lib/flowFilter'
+import { mtlsDescription, mtlsStatusText, securityGlyphVariant, sourceReportsSecurity } from '../lib/flowSecurity'
+import { SecurityIcon } from './SecurityGlyph'
 
 interface FlowsTableProps {
   flows: Flow[]
@@ -11,9 +13,14 @@ interface FlowsTableProps {
   hiddenIds?: Set<string>
   selectedId: string | null
   onSelect: (id: string) => void
+  // The active telemetry source (App's `source`). The mTLS column (issue
+  // #90) is shown only for Istio, the one source that reports it; Beyla gets
+  // no column at all rather than a column of "unknown".
+  source?: string
 }
 
-export function FlowsTable({ flows, hiddenIds, selectedId, onSelect }: FlowsTableProps) {
+export function FlowsTable({ flows, hiddenIds, selectedId, onSelect, source = '' }: FlowsTableProps) {
+  const showMtls = sourceReportsSecurity(source)
   const [filterText, setFilterText] = useState('')
 
   // Filtering happens before sorting so it never disturbs the rate
@@ -57,12 +64,14 @@ export function FlowsTable({ flows, hiddenIds, selectedId, onSelect }: FlowsTabl
             <col />
             <col className="flows-table__col--port" />
             <col className="flows-table__col--bytes" />
+            {showMtls && <col className="flows-table__col--mtls" />}
           </colgroup>
           <thead>
             <tr>
               <th className="flows-table__head-cell">Flow</th>
               <th className="flows-table__head-cell">Port</th>
               <th className="flows-table__head-cell">Rate</th>
+              {showMtls && <th className="flows-table__head-cell">mTLS</th>}
             </tr>
           </thead>
           <tbody>
@@ -70,6 +79,7 @@ export function FlowsTable({ flows, hiddenIds, selectedId, onSelect }: FlowsTabl
               const id = flowId(flow)
               const selected = id === selectedId
               const hidden = hiddenIds?.has(id) ?? false
+              const glyph = showMtls ? securityGlyphVariant(flow) : null
               return (
                 <tr
                   key={id}
@@ -86,6 +96,15 @@ export function FlowsTable({ flows, hiddenIds, selectedId, onSelect }: FlowsTabl
                   </td>
                   <td className="flows-table__cell">{flow.port || '—'}</td>
                   <td className="flows-table__cell">{formatRate(flow.rate, flow.metric)}</td>
+                  {showMtls && (
+                    <td
+                      className={`flows-table__cell flows-table__mtls-cell${glyph ? ` flows-table__mtls-cell--${glyph}` : ''}`}
+                      title={mtlsDescription(flow) ?? undefined}
+                    >
+                      {glyph && <SecurityIcon variant={glyph} />}
+                      {mtlsStatusText(flow) ?? '—'}
+                    </td>
+                  )}
                 </tr>
               )
             })}

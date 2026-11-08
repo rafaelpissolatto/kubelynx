@@ -75,9 +75,13 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, pro
 	edgeOrder := []edgeKey{}
 	edgeValues := map[edgeKey]float64{}
 	edgeMetric := map[edgeKey]string{}
+	// edgePolicyRates sums each edge's rate per connection security policy.
+	// An edge gets an entry only from samples whose source reported a
+	// policy (security != ""), so a Beyla edge never has one.
+	edgePolicyRates := map[edgeKey]map[string]float64{}
 
 	for _, sample := range vector {
-		src, dst, flowProtocol, rawPort, metricKind, ok := qs.mapSample(sample.Metric)
+		src, dst, flowProtocol, rawPort, metricKind, security, ok := qs.mapSample(sample.Metric)
 		if !ok {
 			// Without both endpoints' identity there's no edge to draw.
 			continue
@@ -97,6 +101,12 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, pro
 		}
 		edgeValues[key] += float64(sample.Value)
 		edgeMetric[key] = metricKind
+		if security != "" {
+			if edgePolicyRates[key] == nil {
+				edgePolicyRates[key] = map[string]float64{}
+			}
+			edgePolicyRates[key][security] += float64(sample.Value)
+		}
 	}
 
 	nodeList := make([]Workload, 0, len(nodes))
@@ -107,14 +117,17 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, pro
 
 	edges := make([]Flow, 0, len(edgeOrder))
 	for _, key := range edgeOrder {
+		security, mtlsRatio := edgeSecurity(edgePolicyRates[key])
 		edges = append(edges, Flow{
-			Source:   key.source,
-			Target:   key.target,
-			Protocol: key.protocol,
-			Port:     key.port,
-			Rate:     edgeValues[key],
-			Metric:   edgeMetric[key],
-			Query:    qs.edgeQuery(nodes[key.source], nodes[key.target], key.protocol, key.port, cardinality),
+			Source:    key.source,
+			Target:    key.target,
+			Protocol:  key.protocol,
+			Port:      key.port,
+			Rate:      edgeValues[key],
+			Metric:    edgeMetric[key],
+			Query:     qs.edgeQuery(nodes[key.source], nodes[key.target], key.protocol, key.port, cardinality),
+			Security:  security,
+			MTLSRatio: mtlsRatio,
 		})
 	}
 	sort.Slice(edges, func(i, j int) bool {
@@ -127,6 +140,35 @@ func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, pro
 	return Graph{Nodes: nodeList, Edges: edges}, nil
 }
 
+// edgeSecurity derives one edge's Flow.Security and Flow.MTLSRatio from its
+// rate summed per connection security policy (ADR 0002, issue #90). nil or
+// empty policyRates means the source doesn't observe connection security
+// (Beyla), and yields ("", 0) so the fields are omitted from JSON. Otherwise
+// only SecurityMutualTLS and SecurityNone rates above zero count —
+// "unknown", any other value, and zero rates count toward neither side:
+//
+//   - mutual_tls > 0 only: SecurityMutualTLS
+//   - none > 0 only: SecurityNone
+//   - both > 0: SecurityMixed, mtlsRatio = mutual_tls / (mutual_tls + none)
+//   - neither: SecurityUnknown
+func edgeSecurity(policyRates map[string]float64) (security string, mtlsRatio float64) {
+	if len(policyRates) == 0 {
+		return "", 0
+	}
+	mtls := policyRates[SecurityMutualTLS]
+	plain := policyRates[SecurityNone]
+	switch {
+	case mtls > 0 && plain > 0:
+		return SecurityMixed, mtls / (mtls + plain)
+	case mtls > 0:
+		return SecurityMutualTLS, 0
+	case plain > 0:
+		return SecurityNone, 0
+	default:
+		return SecurityUnknown, 0
+	}
+}
+
 // beylaSource is the querySource implementation for SourceBeyla, wrapping
 // the Beyla-specific query construction and label mapping below with zero
 // behavior change from before BuildTopology was generalized to multiple
@@ -137,14 +179,16 @@ func (beylaSource) buildQuery(namespaces []string, protocol string, classes Prot
 	return buildTopologyQuery(namespaces, protocol, classes)
 }
 
-func (beylaSource) mapSample(metric model.Metric) (src, dst Workload, protocol, port, metricKind string, ok bool) {
+// mapSample returns security "" for every sample: Beyla's network flow
+// metrics carry no connection security information.
+func (beylaSource) mapSample(metric model.Metric) (src, dst Workload, protocol, port, metricKind, security string, ok bool) {
 	srcName := string(metric["k8s_src_owner_name"])
 	srcNS := string(metric["k8s_src_namespace"])
 	dstName := string(metric["k8s_dst_owner_name"])
 	dstNS := string(metric["k8s_dst_namespace"])
 
 	if srcName == "" || srcNS == "" || dstName == "" || dstNS == "" {
-		return Workload{}, Workload{}, "", "", "", false
+		return Workload{}, Workload{}, "", "", "", "", false
 	}
 
 	src = Workload{
@@ -161,7 +205,7 @@ func (beylaSource) mapSample(metric model.Metric) (src, dst Workload, protocol, 
 	}
 	protocol = string(metric["transport"])
 	port = string(metric["dst_port"])
-	return src, dst, protocol, port, MetricBytes, true
+	return src, dst, protocol, port, MetricBytes, "", true
 }
 
 func (beylaSource) edgeQuery(src, dst Workload, protocol, port string, cardinality PortCardinality) string {

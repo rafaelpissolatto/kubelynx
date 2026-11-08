@@ -43,8 +43,13 @@ type querySource interface {
 	// Workload endpoints, the protocol/port values BuildTopology groups
 	// edges by, and which Metric kind (MetricBytes or MetricRequests) the
 	// sample belongs to. ok=false means the sample lacks enough identity
-	// to produce an edge and BuildTopology skips it.
-	mapSample(metric model.Metric) (src, dst Workload, protocol, port, metricKind string, ok bool)
+	// to produce an edge and BuildTopology skips it. security is the
+	// sample's connection security policy as the source reports it (Istio:
+	// "mutual_tls", "none", or "unknown" for a missing/unrecognised value);
+	// a source that doesn't observe connection security (Beyla) returns ""
+	// for every sample, and BuildTopology then leaves Flow.Security unset
+	// (see edgeSecurity).
+	mapSample(metric model.Metric) (src, dst Workload, protocol, port, metricKind, security string, ok bool)
 
 	// edgeQuery renders the drill-down PromQL for one aggregated edge
 	// (src, dst, protocol, port as BuildTopology computed them).

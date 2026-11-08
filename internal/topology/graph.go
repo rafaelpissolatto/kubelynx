@@ -39,14 +39,41 @@ const (
 // every series sharing that edge's endpoint identity, protocol, and port
 // for the selected source.
 type Flow struct {
-	Source   string  `json:"source"`
-	Target   string  `json:"target"`
-	Protocol string  `json:"protocol,omitempty"`
-	Port     string  `json:"port,omitempty"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	Protocol string `json:"protocol,omitempty"`
+	Port     string `json:"port,omitempty"`
 	// Rate is a per-second rate; Metric names which quantity it measures
 	// (MetricBytes or MetricRequests) — the frontend keys edge-thickness
 	// scaling and labels off Metric rather than assuming bytes.
 	Rate   float64 `json:"rate"`
 	Metric string  `json:"metric"`
 	Query  string  `json:"query"`
+	// Security is the edge's mTLS status, derived from Istio's
+	// connection_security_policy label (see edgeSecurity and ADR 0002's
+	// "per-Flow mTLS status" amendment): one of SecurityMutualTLS,
+	// SecurityNone, SecurityMixed, or SecurityUnknown. It is "" (omitted
+	// from JSON) for a source that doesn't observe connection security
+	// (Beyla).
+	Security string `json:"security,omitempty"`
+	// MTLSRatio is the share of Rate that was mutual_tls, strictly between
+	// 0 and 1. Set only when Security is SecurityMixed; 0 (omitted)
+	// otherwise.
+	MTLSRatio float64 `json:"mtlsRatio,omitempty"`
 }
+
+// Flow.Security values (ADR 0002, issue #90).
+const (
+	// SecurityMutualTLS means every policy-labelled sample on the edge
+	// with a non-zero rate was mutual_tls.
+	SecurityMutualTLS = "mutual_tls"
+	// SecurityNone means every policy-labelled sample on the edge with a
+	// non-zero rate was plaintext ("none").
+	SecurityNone = "none"
+	// SecurityMixed means the edge carried both mutual_tls and plaintext
+	// traffic; Flow.MTLSRatio holds the mutual_tls share.
+	SecurityMixed = "mixed"
+	// SecurityUnknown means the source observes connection security but no
+	// sample on the edge reported a known policy with a non-zero rate.
+	SecurityUnknown = "unknown"
+)

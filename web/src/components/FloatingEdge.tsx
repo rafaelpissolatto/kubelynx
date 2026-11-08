@@ -4,6 +4,8 @@ import { getEdgeParams } from '../lib/floatingEdge'
 import type { TrafficDots } from '../lib/layout'
 import type { Flow } from '../lib/topology'
 import { EdgeDisplayContext, edgeLabelText } from '../lib/displayOptions'
+import { edgeSecurityVariant, mtlsDescription, type EdgeSecurityVariant } from '../lib/flowSecurity'
+import { SecurityGlyphShape } from './SecurityGlyph'
 import {
   chevronMark,
   chooseRoute,
@@ -50,6 +52,15 @@ const NODE_GAP = 3
 // next to huge ones.
 const MARK_MIN_ZOOM = 0.6
 const MARK_MAX_ZOOM = 1.25
+
+// Quantized so a zoom gesture re-renders marks and badges a bounded number
+// of times.
+const markZoom = (s: { transform: [number, number, number] }) =>
+  Math.round(Math.min(MARK_MAX_ZOOM, Math.max(MARK_MIN_ZOOM, s.transform[2])) * 20) / 20
+
+// The mTLS badge (issue #90): a disc behind the lock glyph, in screen
+// pixels like the direction marks.
+const BADGE_RADIUS = 8
 
 // Rough size of the shown label — PROTOCOL :PORT or a rate, per Display ▾
 // (React Flow's 10px edge text plus labelBgPadding below), in flow units —
@@ -127,9 +138,12 @@ function keepClearBoxes(
   source: string,
   target: string,
   label: KeepClear | null,
+  badge: KeepClear | null,
   scale: number,
 ): KeepClear[] {
-  const boxes: KeepClear[] = label ? [label] : []
+  const boxes: KeepClear[] = []
+  if (label) boxes.push(label)
+  if (badge) boxes.push(badge)
   for (const [id, node] of nodeLookup) {
     if (id === source || id === target || node.type !== 'workload') continue
     const halfWidth = (node.measured.width ?? 0) / 2
@@ -162,15 +176,17 @@ function DirectionMarks({
   target,
   edgeStyle,
   label,
+  badge,
 }: {
   points: { x: number; y: number }[]
   source: string
   target: string
   edgeStyle: CSSProperties | undefined
   label: { text: unknown; x: number; y: number } | null
+  // Where the mTLS badge sits (issue #90), so the chevron keeps off it too.
+  badge: BadgePlacement | null
 }) {
-  // Quantized so a zoom gesture re-renders these a bounded number of times.
-  const zoom = useStore((s) => Math.round(Math.min(MARK_MAX_ZOOM, Math.max(MARK_MIN_ZOOM, s.transform[2])) * 20) / 20)
+  const zoom = useStore(markZoom)
   const scale = 1 / zoom
   // Computed inside the selector, with an equality check on the result, so
   // panning or dragging unrelated nodes doesn't re-render anything.
@@ -182,7 +198,14 @@ function DirectionMarks({
             points,
             BORDER_RADIUS,
             CHEVRON_HALF * scale,
-            keepClearBoxes(s.nodeLookup, source, target, label && labelBox(label.text, label.x, label.y, scale), scale),
+            keepClearBoxes(
+              s.nodeLookup,
+              source,
+              target,
+              label && labelBox(label.text, label.x, label.y, scale),
+              badge && badgeBox(badge, scale),
+              scale,
+            ),
           ),
     sameMark,
   )
@@ -201,6 +224,44 @@ function DirectionMarks({
       {chevron && mark(chevron, CHEVRON_PATH)}
       {head && mark(head, ARROWHEAD_PATH)}
     </>
+  )
+}
+
+type BadgePlacement = { x: number; y: number; labelShown: boolean }
+
+// The badge sits at the label position; while the label is shown it moves
+// just above it, so neither covers the other.
+function badgeCenter(badge: BadgePlacement, scale: number): { x: number; y: number } {
+  return badge.labelShown ? { x: badge.x, y: badge.y - 9 - (BADGE_RADIUS + 2) * scale } : badge
+}
+
+function badgeBox(badge: BadgePlacement, scale: number): KeepClear {
+  const { x, y } = badgeCenter(badge, scale)
+  const half = BADGE_RADIUS * scale
+  return { x, y, halfWidth: half, halfHeight: half, gap: LABEL_GAP * scale }
+}
+
+// The mTLS status badge (issue #90): a lock glyph on a disc, its own
+// component for the same reason as DirectionMarks (re-renders on zoom only).
+// Inside the edge's <g>, so .is-dimmed fades it with the line. The <title>
+// gives the status as text on hover and to assistive tech.
+function SecurityBadge({
+  variant,
+  placement,
+  description,
+}: {
+  variant: EdgeSecurityVariant
+  placement: BadgePlacement
+  description: string | null
+}) {
+  const scale = 1 / useStore(markZoom)
+  const { x, y } = badgeCenter(placement, scale)
+  return (
+    <g className={`flow-edge__badge flow-edge__badge--${variant}`} transform={`translate(${x} ${y}) scale(${scale})`}>
+      {description && <title>{description}</title>}
+      <circle r={BADGE_RADIUS} className="flow-edge__badge-disc" />
+      <SecurityGlyphShape variant={variant} />
+    </g>
   )
 }
 
@@ -239,9 +300,17 @@ export function FloatingEdge({ id, source, target, style, label, selected, data 
   // The elbow's corners, recovered from its path, so both geometries place
   // their direction marks the same way.
   const vertices = routePoints ?? pathVertices(path)
+  // mTLS status (issue #90): Istio flows only — a Beyla flow has no
+  // Flow.security, gets no variant, and renders exactly as before.
+  const security = edgeSecurityVariant(flow, display.highlightPlaintext)
+  const badge: BadgePlacement | null = security ? { x: labelX, y: labelY, labelShown: !!showLabel } : null
 
   return (
-    <g onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+    <g
+      className={security ? `flow-edge--${security}` : undefined}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <path
         d={path}
         fill="none"
@@ -255,11 +324,13 @@ export function FloatingEdge({ id, source, target, style, label, selected, data 
         target={target}
         edgeStyle={style}
         label={showLabel ? { text: labelText, x: labelX, y: labelY } : null}
+        badge={badge}
       />
       <BaseEdge
         id={id}
         path={path}
         style={style}
+        className="flow-edge__line"
         label={showLabel ? labelText : undefined}
         labelX={showLabel ? labelX : undefined}
         labelY={showLabel ? labelY : undefined}
@@ -281,6 +352,9 @@ export function FloatingEdge({ id, source, target, style, label, selected, data 
             />
           </circle>
         ))}
+      {security && badge && flow && (
+        <SecurityBadge variant={security} placement={badge} description={mtlsDescription(flow)} />
+      )}
     </g>
   )
 }

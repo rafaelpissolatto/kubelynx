@@ -27,6 +27,12 @@ body,
   /* Unselected flow lines + arrowheads: a muted purple, so the graph reads
      as one purple identity with the accented selection. */
   --edge-stroke: #7d6fae;
+  /* mTLS status of Istio flows (issue #90): lock badges, the plaintext and
+     mixed edge tints, and their legend/table glyphs. Never the only cue —
+     each pairs with a glyph shape and a stroke pattern. */
+  --edge-mtls: #7fd1a0;
+  --edge-plaintext: #f28b82;
+  --edge-mixed: #f2c46b;
   --danger: #f28b82;
   /* Non-blocking warnings, e.g. the broad namespace selection banner. */
   --warning: #f2c46b;
@@ -63,6 +69,9 @@ body,
   --accent: #6b3fd4;
   --accent-border-muted: #c9b8f6;
   --edge-stroke: #9587c4;
+  --edge-mtls: #1f7a4a;
+  --edge-plaintext: #c0392b;
+  --edge-mixed: #8a5a00;
   --danger: #c0392b;
   --warning: #7a4f00;
   --warning-surface: #fff4dc;
@@ -998,6 +1007,11 @@ body,
   width: 84px;
 }
 
+/* Istio only (issue #90): yes / no / mixed (NN %) / unknown. */
+.flows-table__col--mtls {
+  width: 120px;
+}
+
 .flows-table__head-cell {
   position: sticky;
   top: 0;
@@ -1305,6 +1319,14 @@ body,
   margin-bottom: 8px;
 }
 
+/* "mTLS: yes/no/mixed (NN %)/unknown" — Istio flows only (issue #90). */
+.flow-detail__security {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  margin: -4px 0 8px;
+}
+
 .flow-detail__query {
   margin: 0;
   padding: 8px;
@@ -1433,6 +1455,102 @@ body,
   .flow-edge__traffic-dot {
     display: none;
   }
+}
+
+/* mTLS status (issue #90), Istio flows only — FloatingEdge adds these
+   classes only when Flow.security calls for them, so Beyla edges are
+   untouched. Plaintext and mixed tint the line and its direction marks
+   (both carry .react-flow__edge-path; a selected flow's inline accent
+   stroke still wins) and give the line itself a pattern: dashed for
+   plaintext, dash-dot for mixed, so they read without color. */
+.flow-edge--plaintext .react-flow__edge-path {
+  stroke: var(--edge-plaintext);
+}
+
+.flow-edge--plaintext .flow-edge__line {
+  stroke-dasharray: 5 4;
+}
+
+.flow-edge--mixed .react-flow__edge-path {
+  stroke: var(--edge-mixed);
+}
+
+.flow-edge--mixed .flow-edge__line {
+  stroke-dasharray: 9 3 2 3;
+}
+
+/* The lock badge at the label position: a disc in the page background,
+   ringed and filled with the status color. */
+.flow-edge__badge-disc {
+  fill: var(--bg);
+  stroke: currentColor;
+  stroke-width: 1;
+}
+
+.flow-edge__badge--mtls,
+.security-glyph--mtls {
+  color: var(--edge-mtls);
+}
+
+.flow-edge__badge--plaintext,
+.security-glyph--plaintext {
+  color: var(--edge-plaintext);
+}
+
+.flow-edge__badge--mixed,
+.security-glyph--mixed {
+  color: var(--edge-mixed);
+}
+
+/* Inline lock icon beside text (flows table, flow detail, legend). */
+.security-icon {
+  flex: none;
+  vertical-align: -1px;
+  margin-right: 4px;
+}
+
+/* mTLS legend (components/SecurityLegend.tsx): a small panel in the canvas
+   corner, styled like the Controls and minimap. */
+.react-flow__panel.security-legend {
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.security-legend__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.security-legend__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.security-legend__sample {
+  flex: none;
+}
+
+.security-legend__line {
+  stroke: var(--edge-stroke);
+  stroke-width: 1.5;
+}
+
+.security-legend__line--plaintext {
+  stroke: var(--edge-plaintext);
+  stroke-dasharray: 5 4;
+}
+
+.security-legend__line--mixed {
+  stroke: var(--edge-mixed);
+  stroke-dasharray: 9 3 2 3;
 }
 
 /* Display -> Namespace bands: Hide (issue #76). Visual only: the band
