@@ -33,10 +33,32 @@ prometheus:
 # How often the UI polls for fresh topology (a Go duration, e.g. 15s, 1m).
 refreshInterval: 15s
 
-# Extra flags appended to the kubelynx command line. The chart can't mount
-# extra files yet, so the file-based flags (--protocol-ports-file,
-# --tcp-port-allowlist-file) aren't usable from here; this is an escape hatch
-# for flags added to the binary before the chart learns about them.
+# Port-cardinality and protocol-filter tuning. Both are optional; leave them
+# empty to keep the binary's built-in defaults. Each one is rendered into a
+# chart-managed ConfigMap (plain, non-secret data), mounted as a directory and
+# passed to the matching flag. The binary reads these files once at startup, so
+# the pod restarts automatically when they change. A set key replaces that
+# list wholesale (it doesn't merge with the defaults). Ports are strings in
+# the files; unquoted YAML numbers are converted for you.
+cardinality:
+  # TCP ports that keep their own edge (--tcp-port-allowlist-file); other TCP
+  # ports, and UDP ports other than 53, collapse into one "multiple" edge.
+  # Only the key "tcp" is accepted. Example:
+  #   tcpPortAllowlist:
+  #     tcp: ["80", "443", "8080", "5432"]
+  tcpPortAllowlist: {}
+protocol:
+  # Destination ports counted as HTTP and as gRPC by the protocol filter
+  # (--protocol-ports-file). Only the keys "http" and "grpc" are accepted; a
+  # key you omit ends up with no ports. Example:
+  #   ports:
+  #     http: ["80", "8081"]
+  #     grpc: ["50052"]
+  ports: {}
+
+# Extra flags appended to the kubelynx command line. An escape hatch for flags
+# the chart doesn't expose yet. The port files above have their own values;
+# other file-based flags would also need a volume the chart can't add.
 extraArgs: []
 
 service:

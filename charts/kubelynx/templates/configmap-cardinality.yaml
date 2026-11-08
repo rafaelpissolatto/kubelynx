@@ -1,0 +1,10 @@
+{{- if .Values.cardinality.tcpPortAllowlist }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubelynx.fullname" . }}-cardinality
+  labels:
+    {{- include "kubelynx.labels" . | nindent 4 }}
+data:
+  tcp-port-allowlist.json: {{ include "kubelynx.tcpPortAllowlistJSON" . | quote }}
+{{- end }}

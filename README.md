@@ -149,6 +149,14 @@ helm upgrade kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X
   --set prometheus.basicAuth.existingSecret.name=prom-basic-auth
 ```
 
+To tune which TCP ports keep their own edge, or which ports count as HTTP/gRPC, set them inline. The chart writes them to a ConfigMap and mounts it for the matching flag, and the pod restarts when they change. A list you set replaces the built-in one, so include every port you want:
+
+```sh
+helm upgrade kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X.Y.Z -n kubelynx --reuse-values \
+  --set-json 'cardinality.tcpPortAllowlist={"tcp":["80","443","8080","5432"]}' \
+  --set-json 'protocol.ports={"http":["80","8081"],"grpc":["50052"]}'
+```
+
 Main values:
 
 | Value | Default | Description |
@@ -160,6 +168,8 @@ Main values:
 | `prometheus.basicAuth.existingSecret.name` | `""` | Secret holding the Basic-auth password; empty means no Basic auth |
 | `prometheus.basicAuth.existingSecret.key` | `password` | Key inside that Secret |
 | `refreshInterval` | `15s` | How often the UI polls for fresh topology |
+| `cardinality.tcpPortAllowlist` | `{}` | Inline `{"tcp": ["80","443"]}` rendered into a ConfigMap and passed as `--tcp-port-allowlist-file`; empty keeps the built-in allowlist. TCP ports outside it collapse into one `multiple` edge |
+| `protocol.ports` | `{}` | Inline `{"http": ["80"], "grpc": ["50051"]}` rendered into a ConfigMap and passed as `--protocol-ports-file`; empty keeps the built-in HTTP/gRPC ports |
 
 See [`values.yaml`](charts/kubelynx/values.yaml) for the rest (image, resources, security context, scheduling).
 
