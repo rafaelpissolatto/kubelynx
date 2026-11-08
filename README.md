@@ -179,6 +179,8 @@ KubeLynx needs **no Kubernetes RBAC**: it only talks to Prometheus, so the chart
 
 To try a local build in the dev cluster, run `make setup` once, then `make deploy-kubelynx` and `make port-kubelynx`. To cut a release, see [docs/releasing.md](docs/releasing.md).
 
+CI scans the code, dependencies, git history and image for vulnerabilities and secrets. `make scan` runs the same scanners locally. To see what runs, or to suppress a false positive, see [docs/security-scanning.md](docs/security-scanning.md).
+
 ## License
 
 [Apache 2.0](LICENSE)
