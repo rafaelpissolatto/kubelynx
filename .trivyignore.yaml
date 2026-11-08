@@ -1,0 +1,20 @@
+# Trivy suppressions for the container image scan (ci.yml docker job,
+# release.yml image job, `make scan-image`). Policy and review rules:
+# docs/security-scanning.md#suppressing-a-false-positive
+#
+# Every entry needs `statement` (why it doesn't apply or can't be fixed yet)
+# and `expired_at` (YYYY-MM-DD, at most ~90 days out). After that date Trivy
+# stops ignoring it and the build fails again until someone re-triages it.
+# scripts/security/check-suppressions.py enforces both fields in CI.
+#
+# Example:
+#   vulnerabilities:
+#     - id: CVE-2026-12345
+#       paths:
+#         - "kubelynx"
+#       statement: >-
+#         Only reachable through the HTTP/2 server push path, which kubelynx
+#         never enables. Upstream fix lands in golang.org/x/net v0.63.
+#       expired_at: 2027-01-31
+
+vulnerabilities: []
