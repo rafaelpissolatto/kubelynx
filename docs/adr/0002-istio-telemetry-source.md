@@ -12,3 +12,36 @@ Two consequences of option 1:
 - **Node identity stays Workload-only for both sources, even though Istio also reports real Service identity** (`destination_service_name`). Per `CONTEXT.md`, a graph node is always a Workload. The Istio source builds nodes from `source_workload`/`source_workload_namespace` → `destination_workload`/`destination_workload_namespace`, discarding `destination_service_name` for node identity — the same Workload shape Beyla produces, from a different label set. Rendering Services as a distinct node kind (which Istio, unlike Beyla, could actually support) is deferred: it's a bigger change to `CONTEXT.md`'s vocabulary and the graph model than "add a second source," and isn't needed to ship the source switch.
 
 Exact label names on `istio_requests_total`/`istio_tcp_*` (e.g. how a destination port surfaces, if at all, in default Istio standard metrics) are confirmed against a real `istioctl install --set profile=demo` mesh during implementation, not assumed here.
+
+## Amendment: per-Flow mTLS status (issue #90)
+
+Istio's metrics carry `connection_security_policy`, which KubeLynx used to drop when summing samples into a `Flow`. Issue #90 keeps it through aggregation and adds two **optional** fields to `Flow`. This is an additive, backward-compatible change to the shared `/api/topology` contract: existing fields are untouched, and a client that ignores the new fields sees the same graph as before.
+
+```go
+// Flow (internal/topology/graph.go), new fields only
+Security  string  `json:"security,omitempty"`  // "mutual_tls" | "none" | "mixed" | "unknown"; omitted for Beyla
+MTLSRatio float64 `json:"mtlsRatio,omitempty"` // share of Rate that was mutual_tls, (0,1); only set when Security == "mixed"
+```
+
+`BuildTopology` sums each edge's rate per policy (per `edgeKey`, the same grouping as `Rate`) and derives one value per edge:
+
+| Per-policy rate on the edge | `security` | `mtlsRatio` |
+| --- | --- | --- |
+| only `mutual_tls` > 0 | `mutual_tls` | omitted |
+| only `none` > 0 | `none` | omitted |
+| `mutual_tls` > 0 and `none` > 0 | `mixed` | `mutual_tls / (mutual_tls + none)` |
+| neither (label missing, `unknown`, or zero rate) | `unknown` | omitted |
+
+Samples labelled `unknown` (or missing the label) don't count toward either side, so an edge with `mutual_tls` traffic plus some unlabelled traffic is still `mutual_tls`. The `querySource` seam returns the sample's policy from `mapSample`; Beyla returns `""` and its Flows never set `security`, so the frontend shows nothing for Beyla rather than a misleading "unknown".
+
+Observed on the ambient lab mesh (ztunnel + one waypoint): the waypoint's `istio_requests_total` and ztunnel's in-mesh `istio_tcp_*` hops report `mutual_tls`, and every hop into or out of the mesh reports `unknown`. `none` never appeared, because in ambient mode a plaintext hop to a non-mesh workload is reported as `unknown`. On such a mesh the UI shows those edges as unknown, not plaintext; `none` still renders as plaintext wherever Istio reports it.
+
+Example (`source=istio`):
+
+```json
+{"source":"mesh-frontend/frontend","target":"mesh-backend/backend","protocol":"tcp","rate":5120,"metric":"bytes","query":"…","security":"mutual_tls"}
+{"source":"mesh-backend/backend","target":"mesh-backend/db","protocol":"http","rate":12.5,"metric":"requests","query":"…","security":"mixed","mtlsRatio":0.8}
+```
+
+Example (`source=beyla`), unchanged: `{"source":"demo/frontend","target":"demo/api","protocol":"TCP","port":"8080","rate":1200,"metric":"bytes","query":"…"}`
+
