@@ -549,7 +549,7 @@ body,
 .protocol-filter__chip:hover,
 .source-selector__chip:hover,
 .theme-toggle__chip:hover,
-.band-arrangement-toggle__chip,
+.band-arrangement-toggle__chip:hover,
 .display-choice__chip:hover {
   color: var(--text);
   background: var(--surface-hover);
@@ -558,7 +558,7 @@ body,
 .protocol-filter__chip[aria-pressed='true'],
 .source-selector__chip[aria-pressed='true'],
 .theme-toggle__chip[aria-pressed='true'],
-.band-arrangement-toggle__chip,
+.band-arrangement-toggle__chip[aria-pressed='true'],
 .display-choice__chip[aria-pressed='true'] {
   color: var(--text);
   background: var(--surface-selected);
@@ -568,7 +568,7 @@ body,
 .protocol-filter__chip:focus-visible,
 .source-selector__chip:focus-visible,
 .theme-toggle__chip:focus-visible,
-.band-arrangement-toggle__chip,
+.band-arrangement-toggle__chip:focus-visible,
 .display-choice__chip:focus-visible {
   outline-offset: 1px;
 }
