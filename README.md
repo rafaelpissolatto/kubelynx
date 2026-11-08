@@ -92,6 +92,8 @@ Other make targets:
 | `-prometheus-url` | `http://localhost:9090` | Base URL of the Prometheus server to query |
 | `-refresh-interval` | `15s` | How often the UI polls for fresh topology. A `?refreshInterval=<ms>` URL param overrides it per browser tab |
 | `-prometheus-bearer-token-file` | none | File containing a bearer token for Prometheus/Thanos/Mimir, sent as `Authorization: Bearer <token>`. Re-read on every request, so a rotated Secret applies without a restart. Omit for no auth. |
+| `-prometheus-basic-auth-username` | none | Username for HTTP Basic auth (OpenObserve, Grafana Cloud, a Prometheus behind an auth gateway). Requires `-prometheus-basic-auth-password-file`. Can't be combined with `-prometheus-bearer-token-file` or credentials in `-prometheus-url`. |
+| `-prometheus-basic-auth-password-file` | none | File containing the Basic-auth password (surrounding whitespace trimmed). Re-read on every request, so a rotated Secret applies without a restart. Requires `-prometheus-basic-auth-username`. There is deliberately no literal-password flag. |
 | `-protocol-ports-file` | built-in defaults | JSON file overriding the HTTP/gRPC port classification, e.g. `{"http":["8081"],"grpc":["50052"]}` |
 | `-tcp-port-allowlist-file` | built-in defaults | JSON file overriding the TCP known-ports allowlist, e.g. `{"tcp":["80","443","8080"]}` |
 
@@ -101,6 +103,16 @@ To query a secured Prometheus locally:
 echo -n "$TOKEN" > /tmp/prom-token
 go run ./cmd/kubelynx -prometheus-url https://prom.example -prometheus-bearer-token-file /tmp/prom-token
 ```
+
+For a backend that uses HTTP Basic auth, such as the OpenObserve in the Istio lab cluster (`kubectl -n monitoring port-forward svc/openobserve 5080:5080`), pass a username and a password file rather than embedding credentials in the URL:
+
+```sh
+kubectl -n monitoring get secret openobserve-credentials -o jsonpath='{.data.password}' | base64 -d > /tmp/prom-password
+go run ./cmd/kubelynx -prometheus-url http://localhost:5080/api/default/prometheus \
+  -prometheus-basic-auth-username root@example.com -prometheus-basic-auth-password-file /tmp/prom-password
+```
+
+The startup log's `prometheus_auth` field shows which mode is active: `none`, `bearer-file`, `basic-file`, or `url-userinfo`. Credentials embedded in `-prometheus-url` (`http://user:pass@host`) still work, but the password is redacted wherever KubeLynx logs the URL.
 
 ## Install
 
@@ -128,6 +140,15 @@ helm upgrade kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X
   --set prometheus.bearerToken.existingSecret.name=prom-token
 ```
 
+If it needs HTTP Basic auth instead (OpenObserve, Grafana Cloud, or a Prometheus behind an auth gateway), put the password in a Secret and set the username. The password is mounted the same way, so rotation needs no restart. Bearer and Basic auth can't both be set, and the chart refuses to render with only one of `username` and `existingSecret.name`:
+
+```sh
+kubectl create secret generic prom-basic-auth -n kubelynx --from-file=password=./password
+helm upgrade kubelynx oci://ghcr.io/rafaelpissolatto/charts/kubelynx --version X.Y.Z -n kubelynx --reuse-values \
+  --set prometheus.basicAuth.username=root@example.com \
+  --set prometheus.basicAuth.existingSecret.name=prom-basic-auth
+```
+
 Main values:
 
 | Value | Default | Description |
@@ -135,6 +156,9 @@ Main values:
 | `prometheus.url` | `http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090` | Prometheus base URL (required) |
 | `prometheus.bearerToken.existingSecret.name` | `""` | Secret holding a bearer token; empty means no auth |
 | `prometheus.bearerToken.existingSecret.key` | `token` | Key inside that Secret |
+| `prometheus.basicAuth.username` | `""` | HTTP Basic-auth username; set together with `prometheus.basicAuth.existingSecret.name` |
+| `prometheus.basicAuth.existingSecret.name` | `""` | Secret holding the Basic-auth password; empty means no Basic auth |
+| `prometheus.basicAuth.existingSecret.key` | `password` | Key inside that Secret |
 | `refreshInterval` | `15s` | How often the UI polls for fresh topology |
 
 See [`values.yaml`](charts/kubelynx/values.yaml) for the rest (image, resources, security context, scheduling).

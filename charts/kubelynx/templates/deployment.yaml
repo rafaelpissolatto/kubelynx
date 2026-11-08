@@ -1,4 +1,14 @@
 {{- $tokenSecret := .Values.prometheus.bearerToken.existingSecret }}
+{{- $basicAuth := .Values.prometheus.basicAuth }}
+{{- if and $basicAuth.existingSecret.name (not $basicAuth.username) }}
+{{- fail "prometheus.basicAuth.existingSecret.name is set but prometheus.basicAuth.username isn't; set both or neither" }}
+{{- end }}
+{{- if and $basicAuth.username (not $basicAuth.existingSecret.name) }}
+{{- fail "prometheus.basicAuth.username is set but prometheus.basicAuth.existingSecret.name isn't; set both or neither" }}
+{{- end }}
+{{- if and $tokenSecret.name $basicAuth.existingSecret.name }}
+{{- fail "prometheus.bearerToken and prometheus.basicAuth are mutually exclusive; configure only one" }}
+{{- end }}
 {{- $refreshInterval := toString .Values.refreshInterval }}
 {{- if not (regexMatch "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$" $refreshInterval) }}
 {{- fail (printf "refreshInterval must be a Go duration such as 15s or 1m30s, got %q" $refreshInterval) }}
@@ -46,6 +56,10 @@ spec:
             {{- if $tokenSecret.name }}
             - --prometheus-bearer-token-file=/var/run/secrets/kubelynx/prometheus/token
             {{- end }}
+            {{- if $basicAuth.existingSecret.name }}
+            - {{ printf "--prometheus-basic-auth-username=%s" $basicAuth.username | quote }}
+            - --prometheus-basic-auth-password-file=/var/run/secrets/kubelynx/prometheus-basic-auth/password
+            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -65,22 +79,39 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if $tokenSecret.name }}
+          {{- if or $tokenSecret.name $basicAuth.existingSecret.name }}
+          # Whole directories, never a subPath: kubelet only updates directory
+          # mounts when the Secret rotates.
           volumeMounts:
-            # The whole directory, never a subPath: kubelet only updates
-            # directory mounts when the Secret rotates.
+            {{- if $tokenSecret.name }}
             - name: prometheus-token
               mountPath: /var/run/secrets/kubelynx/prometheus
               readOnly: true
+            {{- end }}
+            {{- if $basicAuth.existingSecret.name }}
+            - name: prometheus-basic-auth
+              mountPath: /var/run/secrets/kubelynx/prometheus-basic-auth
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if $tokenSecret.name }}
+      {{- if or $tokenSecret.name $basicAuth.existingSecret.name }}
       volumes:
+        {{- if $tokenSecret.name }}
         - name: prometheus-token
           secret:
             secretName: {{ $tokenSecret.name }}
             items:
               - key: {{ $tokenSecret.key | default "token" }}
                 path: token
+        {{- end }}
+        {{- if $basicAuth.existingSecret.name }}
+        - name: prometheus-basic-auth
+          secret:
+            secretName: {{ $basicAuth.existingSecret.name }}
+            items:
+              - key: {{ $basicAuth.existingSecret.key | default "password" }}
+                path: password
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

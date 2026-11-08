@@ -18,6 +18,17 @@ prometheus:
     existingSecret:
       name: ""
       key: token
+  basicAuth:
+    # Optional HTTP Basic auth (OpenObserve, Grafana Cloud, Prometheus behind
+    # an auth gateway). Set both username and existingSecret.name, or neither;
+    # can't be combined with bearerToken. The password is mounted from an
+    # existing Secret in the release namespace and re-read on every request,
+    # so rotating the Secret needs no restart. The chart never creates it:
+    #   kubectl create secret generic prom-basic-auth --from-file=password=./password
+    username: ""
+    existingSecret:
+      name: ""
+      key: password
 
 # How often the UI polls for fresh topology (a Go duration, e.g. 15s, 1m).
 refreshInterval: 15s
