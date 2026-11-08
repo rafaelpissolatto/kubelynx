@@ -1,0 +1,188 @@
+name: security
+
+# Code, dependency and secret scanning. Image scanning lives with the image
+# builds in ci.yml (docker job) and release.yml (image job). What runs, the
+# thresholds and how to suppress a false positive: docs/security-scanning.md.
+#
+# Every job is a pass/fail gate and uploads its SARIF/JSON report as a
+# workflow artifact (scan-<job>). Security-tab upload and CodeQL are off
+# until the repo variable SECURITY_TAB_UPLOAD is "true". Set it only once
+# the repo is public or GitHub Code Security is enabled: without that,
+# SARIF upload fails and the CodeQL license doesn't allow scanning
+# private code. See docs/security-scanning.md#security-tab-and-codeql.
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, so new CVEs in unchanged code still get found.
+    - cron: '17 6 * * 1'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Every ignore/allowlist entry has a reason and an unexpired date.
+  suppressions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make scan-suppressions
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make scan-govulncheck
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scan-govulncheck
+          path: scan-reports/
+          if-no-files-found: ignore
+      - if: ${{ !cancelled() && vars.SECURITY_TAB_UPLOAD == 'true' && hashFiles('scan-reports/govulncheck.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: scan-reports/govulncheck.sarif
+          category: govulncheck
+
+  # osv-scanner on web/package-lock.json and go.mod; fails on HIGH/CRITICAL
+  # with a fix available.
+  dependencies:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make scan-deps
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scan-dependencies
+          path: scan-reports/
+          if-no-files-found: ignore
+      - if: ${{ !cancelled() && vars.SECURITY_TAB_UPLOAD == 'true' && hashFiles('scan-reports/osv-scanner.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: scan-reports/osv-scanner.sarif
+          category: osv-scanner
+
+  # SAST without GHAS: gosec for Go, semgrep for Go, TS/React and the
+  # Dockerfile.
+  sast:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - id: gosec
+        run: make scan-gosec
+      # Runs even when gosec failed, so one run shows every finding.
+      - if: ${{ !cancelled() }}
+        run: make scan-sast
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scan-sast
+          path: scan-reports/
+          if-no-files-found: ignore
+      - if: ${{ !cancelled() && vars.SECURITY_TAB_UPLOAD == 'true' && hashFiles('scan-reports/gosec.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: scan-reports/gosec.sarif
+          category: gosec
+      - if: ${{ !cancelled() && vars.SECURITY_TAB_UPLOAD == 'true' && hashFiles('scan-reports/semgrep.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: scan-reports/semgrep.sarif
+          category: semgrep
+
+  # gitleaks: the PR's commits on pull_request, full history otherwise.
+  secrets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: make scan-secrets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ -n "$BASE_SHA" ]]; then
+            make scan-secrets GITLEAKS_LOG_OPTS="$BASE_SHA..$HEAD_SHA"
+          else
+            make scan-secrets
+          fi
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scan-secrets
+          path: scan-reports/
+          if-no-files-found: ignore
+      - if: ${{ !cancelled() && vars.SECURITY_TAB_UPLOAD == 'true' && hashFiles('scan-reports/gitleaks.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: scan-reports/gitleaks.sarif
+          category: gitleaks
+
+  # Off until SECURITY_TAB_UPLOAD is "true": the CodeQL terms only allow
+  # private code under a paid GitHub Code Security license.
+  codeql:
+    if: ${{ vars.SECURITY_TAB_UPLOAD == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - if: matrix.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: codeql-${{ matrix.language }}
