@@ -1,4 +1,5 @@
 import type { BandArrangement } from './bandArrangement'
+import type { EdgeRoute } from './edgeRoute'
 
 // Persists manually-dragged (and auto-anchored) node positions so a
 // background refresh or an unrelated filter change doesn't wipe out a
@@ -50,7 +51,59 @@ export function saveNodePositions(scopeKey: string, positions: NodePositionMap):
 export function clearNodePositions(scopeKey: string): void {
   try {
     localStorage.removeItem(storageKey(scopeKey))
+    localStorage.removeItem(routesStorageKey(scopeKey))
   } catch {
     // Nothing to clean up if storage isn't available.
+  }
+}
+
+// The ELK route each edge was last drawn with (issue #39), persisted under
+// the same scope as the positions it was computed against: a route only
+// fits the node positions it came with, so once persisted positions outlive
+// the ELK layout they came from (topology changed since), the stored route
+// is what still connects them — see selectRoutes in lib/layout.ts. Cleared
+// together with positions by clearNodePositions (Rearrange).
+const ROUTES_STORAGE_PREFIX = 'kubelynx.edgeRoutes.'
+
+function routesStorageKey(scopeKey: string): string {
+  return `${ROUTES_STORAGE_PREFIX}${scopeKey}`
+}
+
+function isPoint(value: unknown): value is { x: number; y: number } {
+  return (
+    !!value &&
+    typeof (value as { x: unknown }).x === 'number' &&
+    typeof (value as { y: unknown }).y === 'number'
+  )
+}
+
+function isEdgeRoute(value: unknown): value is EdgeRoute {
+  const route = value as EdgeRoute
+  return (
+    !!route &&
+    Array.isArray(route.points) &&
+    route.points.length >= 2 &&
+    route.points.every(isPoint) &&
+    isPoint(route.source) &&
+    isPoint(route.target)
+  )
+}
+
+export function loadEdgeRoutes(scopeKey: string): Map<string, EdgeRoute> {
+  try {
+    const raw = localStorage.getItem(routesStorageKey(scopeKey))
+    const parsed: unknown = raw ? JSON.parse(raw) : null
+    if (!parsed || typeof parsed !== 'object') return new Map()
+    return new Map(Object.entries(parsed).filter((entry): entry is [string, EdgeRoute] => isEdgeRoute(entry[1])))
+  } catch {
+    return new Map()
+  }
+}
+
+export function saveEdgeRoutes(scopeKey: string, routes: Map<string, EdgeRoute>): void {
+  try {
+    localStorage.setItem(routesStorageKey(scopeKey), JSON.stringify(Object.fromEntries(routes)))
+  } catch {
+    // Without it, routes just fall back to the floating elbow sooner.
   }
 }

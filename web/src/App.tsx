@@ -52,9 +52,12 @@ import {
   loadNodePositions,
   saveNodePositions,
   clearNodePositions,
+  loadEdgeRoutes,
+  saveEdgeRoutes,
   positionScopeKey,
   type NodePositionMap,
 } from './lib/nodePositions'
+import type { EdgeRoute } from './lib/edgeRoute'
 
 const FLOWS_PANEL_RESIZE_STEP = 20
 
@@ -93,10 +96,11 @@ async function loadTopology(
   source: SourceFilter,
   bandArrangement: BandArrangement,
   knownPositions: NodePositionMap,
+  knownRoutes: Map<string, EdgeRoute>,
 ) {
   const graph = await fetchTopology(namespace, protocol, source)
-  const { nodes, edges, positions } = await layoutGraph(graph, bandArrangement, knownPositions)
-  return { nodes, edges, graph, positions }
+  const { nodes, edges, positions, routes } = await layoutGraph(graph, bandArrangement, knownPositions, knownRoutes)
+  return { nodes, edges, graph, positions, routes }
 }
 
 // Status codes TopologyHandler (internal/api/topology.go) responds with:
@@ -184,6 +188,11 @@ function App() {
   // then kept in sync by every layout run and every drag so a "Rearrange"
   // or drag doesn't need to round-trip through storage to take effect.
   const nodePositionsRef = useRef<NodePositionMap>({})
+  // Same, for the ELK route each edge was last drawn with (issue #39): fed
+  // back into the next layout so an edge keeps a route that still fits its
+  // persisted endpoints when ELK's fresh one no longer does (see
+  // selectRoutes in lib/layout.ts).
+  const edgeRoutesRef = useRef<Map<string, EdgeRoute>>(new Map())
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -294,12 +303,15 @@ function App() {
     setState({ status: 'loading' })
     setSelectedFlowId(null)
     nodePositionsRef.current = loadNodePositions(positionScope)
+    edgeRoutesRef.current = loadEdgeRoutes(positionScope)
 
-    loadTopology(namespaceParam, protocol, source, bandArrangement, nodePositionsRef.current)
-      .then(({ positions, ...result }) => {
+    loadTopology(namespaceParam, protocol, source, bandArrangement, nodePositionsRef.current, edgeRoutesRef.current)
+      .then(({ positions, routes, ...result }) => {
         if (cancelled) return
         nodePositionsRef.current = positionsToRecord(positions)
+        edgeRoutesRef.current = routes
         saveNodePositions(positionScope, nodePositionsRef.current)
+        saveEdgeRoutes(positionScope, routes)
         setState({ status: 'ready', ...result })
       })
       .catch((err: unknown) => {
@@ -319,11 +331,13 @@ function App() {
   // (or namespace/protocol/band-arrangement-change-triggered) load.
   const refreshInBackground = useCallback(
     (cancelledRef: { current: boolean }) => {
-      loadTopology(namespaceParam, protocol, source, bandArrangement, nodePositionsRef.current)
-        .then(({ positions, ...result }) => {
+      loadTopology(namespaceParam, protocol, source, bandArrangement, nodePositionsRef.current, edgeRoutesRef.current)
+        .then(({ positions, routes, ...result }) => {
           if (cancelledRef.current) return
           nodePositionsRef.current = positionsToRecord(positions)
+          edgeRoutesRef.current = routes
           saveNodePositions(positionScope, nodePositionsRef.current)
+          saveEdgeRoutes(positionScope, routes)
           setState({ status: 'ready', ...result })
         })
         .catch((err: unknown) => {
@@ -491,9 +505,11 @@ function App() {
     if (state.status !== 'ready') return
     const graph = state.graph
     clearNodePositions(positionScope)
-    layoutGraph(graph, bandArrangement, {}).then(({ nodes, edges, positions }) => {
+    layoutGraph(graph, bandArrangement, {}).then(({ nodes, edges, positions, routes }) => {
       nodePositionsRef.current = positionsToRecord(positions)
+      edgeRoutesRef.current = routes
       saveNodePositions(positionScope, nodePositionsRef.current)
+      saveEdgeRoutes(positionScope, routes)
       setState({ status: 'ready', nodes, edges, graph })
     })
   }

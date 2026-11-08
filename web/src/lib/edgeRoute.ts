@@ -24,6 +24,59 @@ export function placeRoute(route: EdgeRoute, source: Point, target: Point): Poin
   return route.points.map((p) => ({ x: p.x + dx, y: p.y + dy }))
 }
 
+export type Rect = { x: number; y: number; width: number; height: number }
+
+// Boxes a route may graze without counting as "through" them: ELK keeps
+// edges at least edgeNodeBetweenLayers away from nodes, so only a real
+// overlap — not float noise at a shared border — should disqualify a route.
+const OBSTACLE_INSET = 2
+
+// Whether an axis-aligned segment crosses the interior of `rect`. ELK's
+// ORTHOGONAL routes only ever contain horizontal and vertical segments, so
+// an interval-overlap test is exact here.
+function segmentHitsRect(a: Point, b: Point, rect: Rect): boolean {
+  const left = rect.x + OBSTACLE_INSET
+  const right = rect.x + rect.width - OBSTACLE_INSET
+  const top = rect.y + OBSTACLE_INSET
+  const bottom = rect.y + rect.height - OBSTACLE_INSET
+  return (
+    Math.max(a.x, b.x) > left &&
+    Math.min(a.x, b.x) < right &&
+    Math.max(a.y, b.y) > top &&
+    Math.min(a.y, b.y) < bottom
+  )
+}
+
+export function routeCrossesAny(points: Point[], obstacles: Iterable<Rect>): boolean {
+  for (const rect of obstacles) {
+    for (let i = 1; i < points.length; i++) {
+      if (segmentHitsRect(points[i - 1], points[i], rect)) return true
+    }
+  }
+  return false
+}
+
+// Picks the first candidate route that still connects the edge's endpoints
+// at their current positions (placeRoute) and doesn't pass through any
+// other workload box. A route can go stale without its own endpoints moving
+// — ELK computed it around neighbors that persisted positions (#43) or a
+// drag have since put somewhere else — and drawing it then would look like
+// a deliberate obstacle-aware path while cutting straight through a box.
+// Returns null when no candidate qualifies; the caller falls back to its
+// obstacle-unaware geometry.
+export function chooseRoute(
+  candidates: EdgeRoute[],
+  source: Point,
+  target: Point,
+  obstacles: Rect[],
+): { index: number; points: Point[] } | null {
+  for (let index = 0; index < candidates.length; index++) {
+    const points = placeRoute(candidates[index], source, target)
+    if (points && !routeCrossesAny(points, obstacles)) return { index, points }
+  }
+  return null
+}
+
 // SVG path through `points` with each bend rounded by up to `radius`
 // (clamped so adjacent corners never overlap), plus the point halfway along
 // the polyline's length for the edge label.
