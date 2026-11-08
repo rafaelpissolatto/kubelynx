@@ -585,6 +585,9 @@ body,
 
   .app__zone--view {
     order: 7;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .app__summary {
@@ -603,6 +606,8 @@ body,
 
   .refresh-status {
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
