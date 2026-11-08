@@ -48,6 +48,9 @@ data:
     # instead of `less_than: 32768` because a single attribute can't combine a
     # numeric bound with a list: the pattern reads "any 1-4 digit port, or
     # 10000-32767, or 50051 (gRPC)".
+    #
+    # This is the operator-facing recommended profile documented in
+    # docs/flow-cardinality.md; change both together so they don't drift.
     filter:
       network:
         dst_port:

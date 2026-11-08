@@ -33,6 +33,8 @@ flowchart LR
 
 Each node in the graph is a **workload**: a Deployment, ReplicaSet, DaemonSet or StatefulSet plus its namespace, as Beyla reports it. Nodes are never Kubernetes Services, because Beyla's flow metrics carry no Service identity. [CONTEXT.md](CONTEXT.md) has the full domain vocabulary.
 
+You run Beyla yourself. To keep its flow metrics from growing a new Prometheus series per connection, apply the collection profile in [docs/flow-cardinality.md](docs/flow-cardinality.md).
+
 ## Features
 
 - **Live topology.** Workloads are grouped into namespace bands. Traffic shows as moving dots along edges, and inbound ports appear as badges on each workload.
