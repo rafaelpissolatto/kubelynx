@@ -3,6 +3,7 @@ import {
   applyNodeChanges,
   Background,
   Controls,
+  MiniMap,
   ReactFlow,
   type Edge,
   type Node,
@@ -23,7 +24,14 @@ import {
   type ProtocolFilter as ProtocolFilterValue,
   type SourceFilter,
 } from './lib/topology'
-import { layoutGraph, syncNamespaceBands, type NamespaceBandData, type WorkloadNodeData } from './lib/layout'
+import {
+  finishLayout,
+  planLayout,
+  syncNamespaceBands,
+  type NamespaceBandData,
+  type WorkloadNodeData,
+} from './lib/layout'
+import type { Size } from './lib/bandPacking'
 import { WorkloadNode } from './components/WorkloadNode'
 import { NamespaceBand } from './components/NamespaceBand'
 import { NamespaceMultiSelect } from './components/NamespaceMultiSelect'
@@ -38,7 +46,8 @@ import { WorkloadPanel } from './components/WorkloadPanel'
 import { touchesWorkload } from './lib/workloadSelection'
 import { graphEmphasis, loadFocusMode, saveFocusMode } from './lib/graphEmphasis'
 import { WorkloadSearch } from './components/WorkloadSearch'
-import { PanControls } from './components/PanControls'
+import { SemanticZoom, ZoomReadout } from './components/ZoomControls'
+import { canvasKeyAction } from './lib/canvasKeys'
 import { FloatingEdge } from './components/FloatingEdge'
 import {
   clampFlowsPanelWidth,
@@ -59,6 +68,8 @@ import {
   clearNodePositions,
   loadEdgeRoutes,
   saveEdgeRoutes,
+  loadBandShape,
+  saveBandShape,
   positionScopeKey,
   type NodePositionMap,
 } from './lib/nodePositions'
@@ -80,6 +91,8 @@ const DEFAULT_ACCENT = '#b79cff'
 // than this; a closer view is kept as-is and only panned.
 const SEARCH_JUMP_MIN_ZOOM = 1
 const SEARCH_JUMP_DURATION_MS = 300
+// Viewport animation for keyboard pan/zoom (0 under reduced motion).
+const CANVAS_KEY_DURATION_MS = 120
 
 const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_PROTOCOL: ProtocolFilterValue = 'all'
@@ -108,6 +121,13 @@ function isTextEntry(target: EventTarget | null): boolean {
   return target.isContentEditable || target.closest('input, textarea, select') !== null
 }
 
+// Minimap (issue #81): bands as their own tinted rectangles, workloads as
+// small boxes, the selected workload accented — colors in App.css.
+function minimapNodeClass(node: Node): string {
+  if (node.type === 'namespaceBand') return 'canvas-minimap__band'
+  return node.selected ? 'canvas-minimap__workload canvas-minimap__workload--selected' : 'canvas-minimap__workload'
+}
+
 // Keeps React Flow's object identity for anything whose class doesn't change,
 // so an unchanged node or edge isn't handed to React Flow as new.
 function withClass<T extends { className?: string }>(item: T, className: string | undefined): T {
@@ -118,17 +138,49 @@ function positionsToRecord(positions: Map<string, { x: number; y: number }>): No
   return Object.fromEntries(positions)
 }
 
+// What the graph on screen was laid out with: the persisted-positions scope
+// (positionScopeKey — for 'auto' it includes the resolved band shape, issue
+// #81), that shape, and the positions and ELK routes now in effect, kept in
+// sync by every layout run and every drag so a refresh or drag doesn't need
+// to round-trip through storage. `scope` is null before the first layout of
+// a namespace/arrangement/filter selection, so that one reads from storage.
+type LayoutMemory = {
+  scope: string | null
+  shapeKey: string | null
+  positions: NodePositionMap
+  routes: Map<string, EdgeRoute>
+}
+
+const EMPTY_LAYOUT_MEMORY: LayoutMemory = { scope: null, shapeKey: null, positions: {}, routes: new Map() }
+
+function saveLayoutMemory(namespace: string, memory: LayoutMemory) {
+  if (!memory.scope) return
+  saveNodePositions(memory.scope, memory.positions)
+  saveEdgeRoutes(memory.scope, memory.routes)
+  saveBandShape(namespace, memory.shapeKey)
+}
+
 async function loadTopology(
   namespace: string,
   protocol: ProtocolFilterValue,
   source: SourceFilter,
   bandArrangement: BandArrangement,
-  knownPositions: NodePositionMap,
-  knownRoutes: Map<string, EdgeRoute>,
+  canvas: Size,
+  memory: LayoutMemory,
 ) {
   const graph = await fetchTopology(namespace, protocol, source)
-  const { nodes, edges, positions, routes } = await layoutGraph(graph, bandArrangement, knownPositions, knownRoutes)
-  return { nodes, edges, graph, positions, routes, fetchedAt: Date.now() }
+  // The shape on screen is preferred, so a refresh keeps the arrangement
+  // (and with it the scope its positions are saved under) unless it has
+  // become clearly worse for the canvas.
+  const plan = await planLayout(graph, bandArrangement, canvas, memory.shapeKey)
+  const scope = positionScopeKey(namespace, plan.arrangementKey)
+  // The in-memory copy is current for the scope already on screen (it has
+  // the latest drags); any other scope is read from storage.
+  const known =
+    scope === memory.scope ? memory : { positions: loadNodePositions(scope), routes: loadEdgeRoutes(scope) }
+  const { nodes, edges, positions, routes } = finishLayout(plan, known.positions, known.routes)
+  const nextMemory: LayoutMemory = { scope, shapeKey: plan.shapeKey, positions: positionsToRecord(positions), routes }
+  return { nodes, edges, graph, fetchedAt: Date.now(), memory: nextMemory }
 }
 
 // Status codes TopologyHandler (internal/api/topology.go) responds with:
@@ -231,16 +283,14 @@ function App() {
   // Display ▾ (issue #76): applied on top of the laid-out graph, never fed
   // into layout or the fetch, so changing one never re-runs either.
   const [displayOptions, setDisplayOptions] = useState<DisplayOptions>(loadDisplayOptions)
-  // Mirrors what's in localStorage for the current position scope (see
-  // lib/nodePositions.ts) — read fresh whenever the namespace scope changes,
-  // then kept in sync by every layout run and every drag so a "Rearrange"
-  // or drag doesn't need to round-trip through storage to take effect.
-  const nodePositionsRef = useRef<NodePositionMap>({})
-  // Same, for the ELK route each edge was last drawn with (issue #39): fed
-  // back into the next layout so an edge keeps a route that still fits its
-  // persisted endpoints when ELK's fresh one no longer does (see
-  // selectRoutes in lib/layout.ts).
-  const edgeRoutesRef = useRef<Map<string, EdgeRoute>>(new Map())
+  // Persisted positions and ELK routes (issues #43, #39) for the layout on
+  // screen — see LayoutMemory. Routes are fed back into the next layout so an
+  // edge keeps a route that still fits its persisted endpoints when ELK's
+  // fresh one no longer does (selectRoutes in lib/layout.ts).
+  const layoutMemoryRef = useRef<LayoutMemory>(EMPTY_LAYOUT_MEMORY)
+  // The graph pane: its size drives the 'auto' band shape (issue #81), and
+  // it takes keyboard focus for panning and zooming.
+  const canvasRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -347,25 +397,34 @@ function App() {
   }, [])
 
   const namespaceParam = selectedNamespaces.join(',')
-  // Persisted positions are per namespace scope *and* band arrangement (see
-  // positionScopeKey), so switching arrangement re-lays out (issue #51).
-  const positionScope = positionScopeKey(namespaceParam, bandArrangement)
+
+  // The canvas's current size in screen pixels; the window's as a fallback
+  // before it has mounted.
+  const canvasSize = useCallback((): Size => {
+    const rect = canvasRef.current?.getBoundingClientRect()
+    return rect && rect.width > 0 && rect.height > 0
+      ? { width: rect.width, height: rect.height }
+      : { width: window.innerWidth, height: window.innerHeight }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     setState({ status: 'loading' })
     setSelectedFlowId(null)
     setSelectedWorkloadId(null)
-    nodePositionsRef.current = loadNodePositions(positionScope)
-    edgeRoutesRef.current = loadEdgeRoutes(positionScope)
+    // Persisted positions are per namespace scope *and* (resolved) band
+    // arrangement (see positionScopeKey), so switching arrangement re-lays
+    // out (issue #51); loadTopology reads them for whichever scope applies.
+    // The shape this scope was last shown in is preferred, so a reload
+    // lands on the same grid (and the positions dragged in it) unless the
+    // canvas has changed enough to make another one clearly better.
+    layoutMemoryRef.current = { ...EMPTY_LAYOUT_MEMORY, shapeKey: loadBandShape(namespaceParam) }
 
-    loadTopology(namespaceParam, protocol, source, bandArrangement, nodePositionsRef.current, edgeRoutesRef.current)
-      .then(({ positions, routes, ...result }) => {
+    loadTopology(namespaceParam, protocol, source, bandArrangement, canvasSize(), layoutMemoryRef.current)
+      .then(({ memory, ...result }) => {
         if (cancelled) return
-        nodePositionsRef.current = positionsToRecord(positions)
-        edgeRoutesRef.current = routes
-        saveNodePositions(positionScope, nodePositionsRef.current)
-        saveEdgeRoutes(positionScope, routes)
+        layoutMemoryRef.current = memory
+        saveLayoutMemory(namespaceParam, memory)
         setState({ status: 'ready', ...result })
       })
       .catch((err: unknown) => {
@@ -377,7 +436,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [namespaceParam, positionScope, protocol, source, bandArrangement])
+  }, [namespaceParam, protocol, source, bandArrangement, canvasSize])
 
   // A failed background refresh doesn't replace the last-rendered graph with
   // an error screen — it just logs and leaves the graph as-is; the
@@ -385,20 +444,18 @@ function App() {
   // (or namespace/protocol/band-arrangement-change-triggered) load.
   const refreshInBackground = useCallback(
     (cancelledRef: { current: boolean }) => {
-      loadTopology(namespaceParam, protocol, source, bandArrangement, nodePositionsRef.current, edgeRoutesRef.current)
-        .then(({ positions, routes, ...result }) => {
+      loadTopology(namespaceParam, protocol, source, bandArrangement, canvasSize(), layoutMemoryRef.current)
+        .then(({ memory, ...result }) => {
           if (cancelledRef.current) return
-          nodePositionsRef.current = positionsToRecord(positions)
-          edgeRoutesRef.current = routes
-          saveNodePositions(positionScope, nodePositionsRef.current)
-          saveEdgeRoutes(positionScope, routes)
+          layoutMemoryRef.current = memory
+          saveLayoutMemory(namespaceParam, memory)
           setState({ status: 'ready', ...result })
         })
         .catch((err: unknown) => {
           console.error('background topology refresh failed', err)
         })
     },
-    [namespaceParam, positionScope, protocol, source, bandArrangement],
+    [namespaceParam, protocol, source, bandArrangement, canvasSize],
   )
 
   // Polls /api/topology on refreshIntervalMs while not paused, updating the
@@ -599,6 +656,7 @@ function App() {
   // the less-alarming "no traffic right now" rather than risking a false
   // "misconfigured" warning.
   const noTrafficEverObserved = namespacesLoaded && namespaces.length === 0
+  const hasGraph = state.status === 'ready' && state.nodes.length > 0
 
   // Drags widen the panel toward the left (the handle sits on its left
   // edge), so a decreasing clientX as the pointer moves left translates to
@@ -700,25 +758,59 @@ function App() {
         positions[member.id] = { x: member.position.x + dx, y: member.position.y + dy }
       }
     }
-    nodePositionsRef.current = { ...nodePositionsRef.current, ...positions }
-    saveNodePositions(positionScope, nodePositionsRef.current)
+    const memory = layoutMemoryRef.current
+    layoutMemoryRef.current = { ...memory, positions: { ...memory.positions, ...positions } }
+    saveLayoutMemory(namespaceParam, layoutMemoryRef.current)
   }
 
-  // Discards every persisted position for the current namespace scope and
-  // re-lays-out the graph already in hand from scratch, then persists the
-  // fresh auto-layout as the new baseline so it, in turn, stays stable
-  // across the next refresh.
+  // Discards every persisted position for the current scope and re-lays-out
+  // the graph already in hand from scratch, then persists the fresh
+  // auto-layout as the new baseline so it, in turn, stays stable across the
+  // next refresh. 'auto' re-picks its band shape for the canvas as it is
+  // now (no preference for the old one), so Rearrange after resizing the
+  // window also re-fits the arrangement.
   function handleRearrange() {
     if (state.status !== 'ready') return
     const { graph, fetchedAt } = state
-    clearNodePositions(positionScope)
-    layoutGraph(graph, bandArrangement, {}).then(({ nodes, edges, positions, routes }) => {
-      nodePositionsRef.current = positionsToRecord(positions)
-      edgeRoutesRef.current = routes
-      saveNodePositions(positionScope, nodePositionsRef.current)
-      saveEdgeRoutes(positionScope, routes)
+    if (layoutMemoryRef.current.scope) clearNodePositions(layoutMemoryRef.current.scope)
+    planLayout(graph, bandArrangement, canvasSize()).then((plan) => {
+      const scope = positionScopeKey(namespaceParam, plan.arrangementKey)
+      clearNodePositions(scope)
+      const { nodes, edges, positions, routes } = finishLayout(plan)
+      layoutMemoryRef.current = { scope, shapeKey: plan.shapeKey, positions: positionsToRecord(positions), routes }
+      saveLayoutMemory(namespaceParam, layoutMemoryRef.current)
       setState({ status: 'ready', nodes, edges, graph, fetchedAt })
     })
+  }
+
+  // Keyboard navigation on the focused canvas (issue #81, replacing the
+  // on-canvas pan arrows): arrows pan, + / - zoom, 0 fits. Keys aimed at a
+  // workload (React Flow moves a focused node with the arrows; Enter/Space
+  // select it, #75) or typed into a field are left alone, and `/` and
+  // Escape (#77) aren't canvas keys, so they still reach the window handler.
+  function handleCanvasKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (!flowInstance || event.defaultPrevented || isTextEntry(event.target)) return
+    if (event.target instanceof Element && event.target.closest('.react-flow__node')) return
+    const action = canvasKeyAction(event)
+    if (!action) return
+    event.preventDefault()
+    const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : CANVAS_KEY_DURATION_MS
+    if (action.type === 'pan') {
+      const { x, y, zoom } = flowInstance.getViewport()
+      flowInstance.setViewport({ x: x + action.dx, y: y + action.dy, zoom }, { duration })
+    } else if (action.type === 'zoomIn') flowInstance.zoomIn({ duration })
+    else if (action.type === 'zoomOut') flowInstance.zoomOut({ duration })
+    else flowInstance.fitView({ duration })
+  }
+
+  // React Flow's pane swallows mousedown (d3-zoom), so clicking empty canvas
+  // wouldn't otherwise give it focus; do it explicitly so arrow keys work
+  // right after a click. focusVisible: false keeps the focus ring a
+  // keyboard-only cue (browsers that ignore the option may still show it).
+  function handleCanvasPointerDown(event: React.PointerEvent<HTMLElement>) {
+    if (event.target instanceof Element && event.target.closest('.react-flow__pane')) {
+      canvasRef.current?.focus({ preventScroll: true, focusVisible: false })
+    }
   }
 
   return (
@@ -785,7 +877,17 @@ function App() {
         </div>
       </header>
       <div className="app__body">
-        <main className="app__canvas" data-namespace-bands={displayOptions.namespaceBands ? 'shown' : 'hidden'}>
+        <main
+          ref={canvasRef}
+          className="app__canvas"
+          data-namespace-bands={displayOptions.namespaceBands ? 'shown' : 'hidden'}
+          // Focusable only while there's a graph to navigate.
+          tabIndex={hasGraph ? 0 : undefined}
+          aria-label={hasGraph ? 'Topology graph' : undefined}
+          aria-keyshortcuts={hasGraph ? 'ArrowUp ArrowDown ArrowLeft ArrowRight + - 0' : undefined}
+          onKeyDown={hasGraph ? handleCanvasKeyDown : undefined}
+          onPointerDown={hasGraph ? handleCanvasPointerDown : undefined}
+        >
           {state.status === 'loading' && (
             <div className="app__status app__status--loading">
               <span className="app__spinner" aria-hidden="true" />
@@ -816,7 +918,7 @@ function App() {
               No workload traffic observed in "{selectedNamespaces.join(', ')}" yet.
             </div>
           )}
-          {state.status === 'ready' && state.nodes.length > 0 && (
+          {hasGraph && (
             <EdgeDisplayContext.Provider value={edgeDisplay}>
               <ReactFlow
                 nodes={renderedNodes}
@@ -833,8 +935,20 @@ function App() {
                 onInit={setFlowInstance}
               >
                 <Background color="var(--rf-background-dot)" />
-                <Controls showInteractive={false} />
-                <PanControls />
+                <SemanticZoom target={canvasRef} />
+                <Controls showInteractive={false}>
+                  <ZoomReadout />
+                </Controls>
+                {displayOptions.minimap && (
+                  <MiniMap
+                    className="canvas-minimap"
+                    nodeClassName={minimapNodeClass}
+                    nodeBorderRadius={2}
+                    pannable
+                    zoomable
+                    ariaLabel="Minimap"
+                  />
+                )}
               </ReactFlow>
             </EdgeDisplayContext.Provider>
           )}

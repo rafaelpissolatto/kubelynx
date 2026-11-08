@@ -1,9 +1,8 @@
-import type { BandArrangement } from './bandArrangement'
 import type { EdgeRoute } from './edgeRoute'
 
 // Persists manually-dragged (and auto-anchored) node positions so a
 // background refresh or an unrelated filter change doesn't wipe out a
-// user's manual layout — see layoutGraph's reconciliation in lib/layout.ts.
+// user's manual layout — see finishLayout's reconciliation in lib/layout.ts.
 // Scoped per namespace selection and band arrangement (not protocol): the
 // same node id can legitimately appear in different namespace views, but the
 // protocol filter only changes which edges are shown, not the node set, so
@@ -21,8 +20,45 @@ function storageKey(scopeKey: string): string {
 // place so switching arrangement had no visible effect (issue #51). Keying by
 // arrangement too means a switch lays out fresh, while each arrangement
 // keeps its own manual tweaks for when the user switches back.
-export function positionScopeKey(namespaceKey: string, arrangement: BandArrangement): string {
-  return `${namespaceKey}|${arrangement}`
+//
+// `arrangementKey` is LayoutPlan.arrangementKey (lib/layout.ts): the explicit
+// 'vertical' / 'horizontal' as before, but for 'auto' with several
+// namespaces the shape it resolved to ('auto:rows4', 'auto:vertical', …).
+// Since issue #81 'auto' resolves from the canvas's size and aspect, so the
+// same scope can come out as a different grid on another screen; each shape
+// keeps its own positions instead of a 4-row grid inheriting coordinates
+// dragged on a single strip. Positions saved under the bare pre-#81
+// '<scope>|auto' key were laid out for the old strip/stack and are simply
+// no longer read for multi-namespace views.
+export function positionScopeKey(namespaceKey: string, arrangementKey: string): string {
+  return `${namespaceKey}|${arrangementKey}`
+}
+
+// The band shape a namespace scope was last laid out in (bandShapeKey, e.g.
+// 'rows4'; null for a single-namespace view). Fed back to 'auto' as its
+// preferred shape on the next load, so a reload — even one where a workload
+// came or went and nudged the band sizes — lands on the same grid and so
+// on the same positions scope as before, rather than flipping to a
+// near-equal shape whose positions were never dragged.
+const SHAPE_STORAGE_PREFIX = 'kubelynx.bandShape.'
+
+export function loadBandShape(namespaceKey: string): string | null {
+  try {
+    const raw = localStorage.getItem(`${SHAPE_STORAGE_PREFIX}${namespaceKey}`)
+    // Only ever compared against freshly computed shape keys, so an unknown
+    // value simply matches nothing.
+    return raw && /^(vertical|horizontal|rows\d+|columns\d+)$/.test(raw) ? raw : null
+  } catch {
+    return null
+  }
+}
+
+export function saveBandShape(namespaceKey: string, shapeKey: string | null): void {
+  try {
+    if (shapeKey) localStorage.setItem(`${SHAPE_STORAGE_PREFIX}${namespaceKey}`, shapeKey)
+  } catch {
+    // Without it a reload just picks the best shape afresh.
+  }
 }
 
 // localStorage access is wrapped in try/catch for the same reason as

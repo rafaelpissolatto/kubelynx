@@ -58,7 +58,7 @@ const onOffText = (on: boolean) => (on ? 'On' : 'Off')
 const showHideText = (show: boolean) => (show ? 'Show' : 'Hide')
 
 // How the graph is drawn (issue #76): edge labels, traffic animation,
-// low-traffic edges and namespace bands. Built on HeaderMenu exactly like
+// low-traffic edges, namespace bands, and the minimap (#81). Built on HeaderMenu exactly like
 // SettingsMenu; App.tsx persists every change.
 export function DisplayMenu({ options, onChange }: DisplayMenuProps) {
   const set = <K extends keyof DisplayOptions>(key: K, value: DisplayOptions[K]) =>
@@ -103,6 +103,15 @@ export function DisplayMenu({ options, onChange }: DisplayMenuProps) {
           selected={options.namespaceBands}
           text={showHideText}
           onChange={(show) => set('namespaceBands', show)}
+        />
+      </HeaderMenuSection>
+      <HeaderMenuSection title="Minimap">
+        <Choice
+          label="Minimap"
+          choices={ON_OFF}
+          selected={options.minimap}
+          text={showHideText}
+          onChange={(show) => set('minimap', show)}
         />
       </HeaderMenuSection>
     </HeaderMenu>
