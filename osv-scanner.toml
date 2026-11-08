@@ -1,0 +1,13 @@
+# osv-scanner suppressions for web/package-lock.json and go.mod
+# (security.yml `dependencies` job, `make scan-deps`). Policy and review rules:
+# docs/security-scanning.md#suppressing-a-false-positive
+#
+# Every entry needs `reason` and `ignoreUntil` (at most ~90 days out). After
+# that date the finding comes back. scripts/security/check-suppressions.py
+# enforces both fields in CI.
+#
+# Example:
+#   [[IgnoredVulns]]
+#   id = "GHSA-xxxx-xxxx-xxxx"
+#   ignoreUntil = 2027-01-31
+#   reason = "Dev-server only (vite); never shipped in web/dist. No fixed release yet."

@@ -14,7 +14,9 @@ KUBELYNX_NAMESPACE ?= kubelynx
 
 .PHONY: cluster deploy-prometheus deploy-beyla demo-traffic setup test \
         port-prometheus logs-beyla clean all \
-        image kind-load deploy-kubelynx port-kubelynx lint-chart
+        image kind-load deploy-kubelynx port-kubelynx lint-chart \
+        scan scan-tools scan-suppressions scan-govulncheck scan-deps scan-gosec \
+        scan-sast scan-secrets scan-image lint-workflows
 
 all: setup
 
@@ -84,6 +86,74 @@ port-kubelynx:
 lint-chart:
 	helm lint charts/kubelynx
 	./dev/scripts/check-chart.sh
+
+# --- Security scanning (docs/security-scanning.md) ---
+# CI runs these same targets, so a local run matches the gate. Scanners are
+# pinned in scripts/security/install-tools.sh and installed into .bin/scan;
+# reports (SARIF/JSON) land in scan-reports/.
+SCAN_BIN := $(CURDIR)/.bin/scan
+SCAN_OUT ?= scan-reports
+SCAN_INSTALL = @BIN_DIR=$(SCAN_BIN) scripts/security/install-tools.sh
+# Image to scan; SCAN_PLATFORM picks one platform of a multi-arch registry ref.
+SCAN_IMAGE ?= $(IMAGE)
+SCAN_PLATFORM ?=
+# git log range for scan-secrets, e.g. origin/main..HEAD; empty = full history.
+GITLEAKS_LOG_OPTS ?=
+SEMGREP_IMAGE := semgrep/semgrep:1.182.0@sha256:4a34048c04fef049f71665047f074cffb00cc3d89482f965a5cd151d589237af
+SEMGREP_CONFIGS := --config p/golang --config p/typescript --config p/javascript --config p/react --config p/dockerfile
+TRIVY_FLAGS = --quiet --scanners vuln --ignorefile .trivyignore.yaml $(if $(SCAN_PLATFORM),--platform $(SCAN_PLATFORM))
+
+# Everything except the image, which needs `make image` first.
+scan: scan-suppressions scan-govulncheck scan-deps scan-gosec scan-sast scan-secrets
+
+scan-tools:
+	$(SCAN_INSTALL)
+
+scan-suppressions:
+	python3 scripts/security/check-suppressions.py
+
+# Fails on vulnerabilities reachable from kubelynx's own call graph.
+scan-govulncheck:
+	$(SCAN_INSTALL) govulncheck >/dev/null
+	@mkdir -p $(SCAN_OUT)
+	$(SCAN_BIN)/govulncheck -format sarif ./... > $(SCAN_OUT)/govulncheck.sarif
+	$(SCAN_BIN)/govulncheck ./...
+
+# Fails on HIGH/CRITICAL fixable vulns in web/package-lock.json and go.mod.
+scan-deps:
+	$(SCAN_INSTALL) osv-scanner >/dev/null
+	PATH="$(SCAN_BIN):$$PATH" scripts/security/osv-gate.sh $(SCAN_OUT)
+
+scan-gosec:
+	$(SCAN_INSTALL) gosec >/dev/null
+	@mkdir -p $(SCAN_OUT)
+	$(SCAN_BIN)/gosec -fmt sarif -out $(SCAN_OUT)/gosec.sarif -stdout -verbose text ./...
+
+# SAST for Go, TypeScript/React and the Dockerfile. Unlike CodeQL it runs
+# without GHAS; see docs/security-scanning.md.
+scan-sast:
+	@mkdir -p $(SCAN_OUT)
+	docker run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp -e SEMGREP_SEND_METRICS=off \
+		-v "$(CURDIR):/src" -w /src $(SEMGREP_IMAGE) \
+		semgrep scan --metrics=off --error $(SEMGREP_CONFIGS) --sarif-output=$(SCAN_OUT)/semgrep.sarif
+
+scan-secrets:
+	$(SCAN_INSTALL) gitleaks >/dev/null
+	@mkdir -p $(SCAN_OUT)
+	$(SCAN_BIN)/gitleaks git --no-banner --redact --config .gitleaks.toml \
+		--report-format sarif --report-path $(SCAN_OUT)/gitleaks.sarif \
+		$(if $(GITLEAKS_LOG_OPTS),--log-opts="$(GITLEAKS_LOG_OPTS)") .
+
+# Full report to SARIF, then the gate: HIGH/CRITICAL with a fix available.
+scan-image:
+	$(SCAN_INSTALL) trivy >/dev/null
+	@mkdir -p $(SCAN_OUT)
+	$(SCAN_BIN)/trivy image $(TRIVY_FLAGS) --format sarif --output $(SCAN_OUT)/trivy-image.sarif $(SCAN_IMAGE)
+	$(SCAN_BIN)/trivy image $(TRIVY_FLAGS) --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 $(SCAN_IMAGE)
+
+lint-workflows:
+	$(SCAN_INSTALL) actionlint >/dev/null
+	$(SCAN_BIN)/actionlint
 
 # --- Validation ---
 test:

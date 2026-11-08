@@ -1,0 +1,20 @@
+# gitleaks config (security.yml `secrets` job, `make scan-secrets`).
+# Policy and review rules: docs/security-scanning.md#suppressing-a-false-positive
+#
+# Starts from gitleaks' default rules. Each [[allowlists]] entry needs a
+# `description` saying why the match is not a secret
+# (scripts/security/check-suppressions.py enforces it). Keep allowlists
+# narrow: a path plus a regex or a commit, never a whole directory. For a
+# single line, an inline `gitleaks:allow` comment also works.
+#
+# No allowlists yet: a full-history scan, dev/ and mock/ included, finds
+# nothing, and a blanket path allowlist would also hide a real kubeconfig or
+# token committed there later. Example:
+#
+#   [[allowlists]]
+#   description = "Dummy bearer token used by internal/promclient tests"
+#   paths = ['''^internal/promclient/testdata/token$''']
+#   regexes = ['''not-a-real-token-[0-9]+''']
+
+[extend]
+useDefault = true

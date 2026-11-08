@@ -64,7 +64,8 @@ func LoadPortCardinality(path string) (PortCardinality, error) {
 		return DefaultPortCardinality(), nil
 	}
 
-	data, err := os.ReadFile(path)
+	// Path comes from an operator-set CLI flag, not from a request.
+	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied config file path
 	if err != nil {
 		return PortCardinality{}, fmt.Errorf("reading port cardinality file %s: %w", path, err)
 	}

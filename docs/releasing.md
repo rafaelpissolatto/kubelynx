@@ -8,6 +8,8 @@ A release is a git tag `vX.Y.Z`. Tags are created automatically on merge to `mai
 | Helm chart (OCI) | `oci://ghcr.io/rafaelpissolatto/charts/kubelynx`, version `X.Y.Z` |
 | GitHub Release | `vX.Y.Z`, with generated notes and `kubelynx-X.Y.Z.tgz` attached |
 
+The `image` job builds and scans the linux/amd64 image with Trivy **before** pushing anything. A HIGH/CRITICAL vulnerability with a fix available fails the job, so nothing is pushed and neither the chart nor the GitHub Release is published. After the push it scans the linux/arm64 image by digest. The pushed image also carries an SBOM and build provenance attestation. See [security-scanning.md](security-scanning.md).
+
 The chart's `version` and `appVersion` come from the tag when it's packaged. The values in `charts/kubelynx/Chart.yaml` are placeholders, so don't bump them.
 
 ## Automatic releases
@@ -33,7 +35,7 @@ A tag pushed by the workflow's `GITHUB_TOKEN` doesn't trigger other workflows, s
 
 Pushing a tag yourself still runs `release.yml`. You only need this for pre-releases (see below).
 
-1. Make sure the commit you're releasing is on `main` and its `ci` run is green. The release workflow doesn't re-run CI.
+1. Make sure the commit you're releasing is on `main` and its `ci` and `security` runs are green. The release workflow doesn't re-run them, except for the image scan.
 2. Tag and push:
 
    ```sh
@@ -49,7 +51,7 @@ Pushing a tag yourself still runs `release.yml`. You only need this for pre-rele
 5. Verify from a shell that isn't logged in to GHCR (`docker logout ghcr.io; helm registry logout ghcr.io`):
 
    ```sh
-   docker manifest inspect ghcr.io/rafaelpissolatto/kubelynx:X.Y.Z   # lists amd64 and arm64
+   docker manifest inspect ghcr.io/rafaelpissolatto/kubelynx:X.Y.Z   # lists amd64 and arm64, plus unknown/unknown attestation manifests (SBOM, provenance)
    # stable releases only: latest must be the same image as X.Y.Z
    docker buildx imagetools inspect ghcr.io/rafaelpissolatto/kubelynx:X.Y.Z --format '{{.Manifest.Digest}}'
    docker buildx imagetools inspect ghcr.io/rafaelpissolatto/kubelynx:latest --format '{{.Manifest.Digest}}'
@@ -64,6 +66,7 @@ Tag with a SemVer pre-release suffix, e.g. `v0.2.0-rc.1`. The image gets only th
 ## If a release fails halfway
 
 - **An automatic release failed:** use "Re-run failed jobs", not "Re-run all jobs". A full re-run sees the commit already tagged and skips publishing. If you can't re-run the jobs, publish the existing tag by deleting and re-pushing it from your shell (`git push origin :refs/tags/vX.Y.Z && git push origin vX.Y.Z`), which runs `release.yml` through its tag trigger.
+- **`image` failed on "Scan before push":** nothing was published. Fix or suppress the finding on `main` ([security-scanning.md](security-scanning.md#triaging-a-finding)), then release the next patch version. A suppression or a `build:` bump alone doesn't trigger an automatic release, so run auto-release by hand with `bump=patch`. Don't move the tag. If the fix is upstream only, such as a rebuilt distroless base, re-running the job is enough.
 - **`image` or `chart-publish` failed:** re-run the failed job from the Actions UI. Pushing the same image or chart version again just replaces it, and later jobs run once it succeeds.
 - **`github-release` failed after creating the Release:** `gh release create` refuses to create a Release that already exists. Either delete the Release (`gh release delete vX.Y.Z`, keeping the tag) and re-run the job, or attach the chart yourself: `gh release upload vX.Y.Z kubelynx-X.Y.Z.tgz`.
 - **The tagged commit was wrong:** don't move the tag. Once an image or chart version is published, users may already have pulled it, so a different image under the same version is worse than a gap. Fix `main` and release the next patch version.
