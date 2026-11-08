@@ -201,7 +201,8 @@ if render --set-json 'protocol.ports={"http":"80"}' >/dev/null 2>&1; then
 fi
 
 # Values the chart must reject at render time rather than crash-loop on.
-for bad in 'prometheus.url=' 'refreshInterval=abc' 'refreshInterval=30'; do
+for bad in 'prometheus.url=' 'refreshInterval=abc' 'refreshInterval=30' \
+  'namespaceWarnThreshold=-1' 'namespaceWarnThreshold=abc' 'namespaceWarnThreshold=1.5'; do
   if render --set "$bad" >/dev/null 2>&1; then
     fail "chart accepted --set $bad"
   fi
@@ -210,7 +211,14 @@ if ! render --set refreshInterval=1m30s >/dev/null 2>&1; then
   fail "chart rejected --set refreshInterval=1m30s"
 fi
 
+if ! grep -q -- '- --namespace-warn-threshold=6$' <<<"$MANIFESTS"; then
+  fail "default render must pass --namespace-warn-threshold=6"
+fi
+if ! render --set namespaceWarnThreshold=0 | grep -q -- '- --namespace-warn-threshold=0$'; then
+  fail "namespaceWarnThreshold=0 (warning off) must render --namespace-warn-threshold=0"
+fi
+
 if [[ "$FAILED" == "true" ]]; then
   exit 1
 fi
-echo "PASS: chart renders one Deployment + one Service, no RBAC, and wires bearer/basic auth and the refresh interval correctly."
+echo "PASS: chart renders one Deployment + one Service, no RBAC, and wires bearer/basic auth, the refresh interval and the namespace warn threshold correctly."

@@ -46,14 +46,13 @@ export function flowId(flow: Flow): string {
 // ProtocolFilter is one of the values /api/protocols returns and
 // /api/topology?protocol= accepts. The frontend never hardcodes the set
 // itself — see fetchProtocols — matching the same pattern NamespacesResponse
-// establishes for AllNamespaces/MaxNamespaces below.
+// establishes for AllNamespaces below.
 export type ProtocolFilter = string
 
 // TopologyError carries the HTTP status /api/topology responded with, so
 // callers can tell a Prometheus-side failure (502, from internal/api's
-// TopologyHandler) apart from a rejected request (400, e.g. too many
-// namespaces or an invalid protocol) rather than treating every failure the
-// same way.
+// TopologyHandler) apart from a rejected request (400, e.g. an invalid
+// protocol or source) rather than treating every failure the same way.
 export class TopologyError extends Error {
   status: number
 
@@ -118,14 +117,12 @@ export async function fetchSources(): Promise<SourcesResponse> {
 
 // NamespacesResponse mirrors the JSON shape served by /api/namespaces
 // (internal/api.namespacesResponse in the Go backend). `all` is the
-// sentinel /api/topology?namespace= accepts to mean "every namespace", and
-// `max` is the most namespaces a single /api/topology request may be scoped
-// to (all is exempt) — the frontend must never hardcode either value
-// itself, since the backend is the only source of truth for both.
+// sentinel /api/topology?namespace= accepts to mean "every namespace" — the
+// frontend must never hardcode it, since the backend is the only source of
+// truth for it.
 export interface NamespacesResponse {
   namespaces: string[]
   all: string
-  max: number
 }
 
 export async function fetchNamespaces(): Promise<NamespacesResponse> {
@@ -138,10 +135,13 @@ export async function fetchNamespaces(): Promise<NamespacesResponse> {
 
 // ConfigResponse mirrors the JSON shape served by /api/config
 // (internal/api.configResponse in the Go backend): settings the operator
-// chose at deploy time (--refresh-interval, i.e. the Helm chart's
-// refreshInterval) that the frontend can't know on its own.
+// chose at deploy time (--refresh-interval and --namespace-warn-threshold,
+// i.e. the Helm chart's refreshInterval and namespaceWarnThreshold) that the
+// frontend can't know on its own. namespaceWarnThreshold is 0 when the
+// broad-selection warning is turned off.
 export interface ConfigResponse {
   refreshIntervalMs: number
+  namespaceWarnThreshold: number
 }
 
 export async function fetchConfig(): Promise<ConfigResponse> {

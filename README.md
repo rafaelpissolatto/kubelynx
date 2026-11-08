@@ -91,6 +91,7 @@ Other make targets:
 | `-listen-addr` | `:8080` | Address to serve the API on |
 | `-prometheus-url` | `http://localhost:9090` | Base URL of the Prometheus server to query |
 | `-refresh-interval` | `15s` | How often the UI polls for fresh topology. A `?refreshInterval=<ms>` URL param overrides it per browser tab |
+| `-namespace-warn-threshold` | `6` | When the namespace picker shows a non-blocking "large graphs may render slowly" warning: at this many namespaces from different prefix groups (the part before the first `-`), or "All namespaces" on a cluster with at least this many. `0` turns it off. Selections are never capped |
 | `-prometheus-bearer-token-file` | none | File containing a bearer token for Prometheus/Thanos/Mimir, sent as `Authorization: Bearer <token>`. Re-read on every request, so a rotated Secret applies without a restart. Omit for no auth. |
 | `-prometheus-basic-auth-username` | none | Username for HTTP Basic auth (OpenObserve, Grafana Cloud, a Prometheus behind an auth gateway). Requires `-prometheus-basic-auth-password-file`. Can't be combined with `-prometheus-bearer-token-file` or credentials in `-prometheus-url`. |
 | `-prometheus-basic-auth-password-file` | none | File containing the Basic-auth password (surrounding whitespace trimmed). Re-read on every request, so a rotated Secret applies without a restart. Requires `-prometheus-basic-auth-username`. There is deliberately no literal-password flag. |
@@ -168,6 +169,7 @@ Main values:
 | `prometheus.basicAuth.existingSecret.name` | `""` | Secret holding the Basic-auth password; empty means no Basic auth |
 | `prometheus.basicAuth.existingSecret.key` | `password` | Key inside that Secret |
 | `refreshInterval` | `15s` | How often the UI polls for fresh topology |
+| `namespaceWarnThreshold` | `6` | Passed as `--namespace-warn-threshold`: how many namespaces from different prefix groups the namespace picker accepts before warning that the graph may render slowly; `0` turns it off |
 | `cardinality.tcpPortAllowlist` | `{}` | Inline `{"tcp": ["80","443"]}` rendered into a ConfigMap and passed as `--tcp-port-allowlist-file`; empty keeps the built-in allowlist. TCP ports outside it collapse into one `multiple` edge |
 | `protocol.ports` | `{}` | Inline `{"http": ["80"], "grpc": ["50051"]}` rendered into a ConfigMap and passed as `--protocol-ports-file`; empty keeps the built-in HTTP/gRPC ports |
 

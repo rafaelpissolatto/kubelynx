@@ -16,6 +16,10 @@
 {{- if not (regexMatch "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$" $refreshInterval) }}
 {{- fail (printf "refreshInterval must be a Go duration such as 15s or 1m30s, got %q" $refreshInterval) }}
 {{- end }}
+{{- $namespaceWarnThreshold := toString .Values.namespaceWarnThreshold }}
+{{- if not (regexMatch "^[0-9]+$" $namespaceWarnThreshold) }}
+{{- fail (printf "namespaceWarnThreshold must be a whole number (0 turns the warning off), got %q" $namespaceWarnThreshold) }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -65,6 +69,7 @@ spec:
             - --listen-addr=:8080
             - --prometheus-url={{ required "prometheus.url is required" .Values.prometheus.url }}
             - --refresh-interval={{ $refreshInterval }}
+            - --namespace-warn-threshold={{ $namespaceWarnThreshold }}
             {{- if $tokenSecret.name }}
             - --prometheus-bearer-token-file=/var/run/secrets/kubelynx/prometheus/token
             {{- end }}

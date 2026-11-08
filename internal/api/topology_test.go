@@ -103,10 +103,12 @@ func TestTopologyHandler_MultipleNamespaces(t *testing.T) {
 	}
 }
 
-func TestTopologyHandler_TooManyNamespaces_Returns400(t *testing.T) {
+// Issue #86: there's no per-request namespace cap; the UI warns about broad
+// selections instead of the server rejecting them.
+func TestTopologyHandler_ManyNamespaces_Accepted(t *testing.T) {
 	prom := fakePromAPI(t, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
 
-	namespaces := make([]string, topology.MaxNamespaces+1)
+	namespaces := make([]string, 50)
 	for i := range namespaces {
 		namespaces[i] = fmt.Sprintf("ns-%d", i)
 	}
@@ -115,12 +117,12 @@ func TestTopologyHandler_TooManyNamespaces_Returns400(t *testing.T) {
 
 	api.TopologyHandler(prom, topology.DefaultProtocolClasses(), topology.DefaultPortCardinality())(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestTopologyHandler_AllNamespaces_NotSubjectToMax(t *testing.T) {
+func TestTopologyHandler_AllNamespaces_Accepted(t *testing.T) {
 	prom := fakePromAPI(t, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/topology?namespace="+topology.AllNamespaces, nil)

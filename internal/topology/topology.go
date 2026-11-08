@@ -23,12 +23,6 @@ const window = "1m"
 // namespace observed, rather than filtering to a set.
 const AllNamespaces = "all"
 
-// MaxNamespaces caps how many namespaces a single BuildTopology call may
-// scope to (AllNamespaces is exempt). Beyond this, the resulting node/edge
-// count — and the swimlane bands the frontend renders one per namespace —
-// risks overwhelming the browser; see issue #14.
-const MaxNamespaces = 6
-
 // IsAllNamespaces reports whether namespaces is the [AllNamespaces]
 // sentinel value, rather than a set of specific namespaces.
 func IsAllNamespaces(namespaces []string) bool {
@@ -57,7 +51,7 @@ type edgeKey struct {
 // ephemeral/dynamic ports from exploding the returned edge count. source
 // selects which querySource (see sourceFor) builds the query and maps
 // samples — "" is treated as SourceBeyla (see SourceBeyla's doc comment).
-// Callers enforce MaxNamespaces, IsValidProtocol, and IsValidSource
+// Callers enforce IsValidProtocol and IsValidSource
 // themselves (see internal/api); BuildTopology does not reject an oversized
 // namespaces slice or an invalid protocol/source on its own.
 func BuildTopology(ctx context.Context, api promv1.API, namespaces []string, protocol string, classes ProtocolClasses, cardinality PortCardinality, source string) (Graph, error) {
