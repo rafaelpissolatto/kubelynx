@@ -45,8 +45,8 @@ import { WorkloadPanel } from './components/WorkloadPanel'
 import { touchesWorkload } from './lib/workloadSelection'
 import { graphEmphasis, loadFocusMode, saveFocusMode } from './lib/graphEmphasis'
 import { WorkloadSearch } from './components/WorkloadSearch'
-import { PanControls } from './components/PanControls'
-import { SemanticZoom } from './components/ZoomControls'
+import { SemanticZoom, ZoomReadout } from './components/ZoomControls'
+import { canvasKeyAction } from './lib/canvasKeys'
 import { FloatingEdge } from './components/FloatingEdge'
 import {
   clampFlowsPanelWidth,
@@ -88,6 +88,8 @@ const DEFAULT_ACCENT = '#b79cff'
 // than this; a closer view is kept as-is and only panned.
 const SEARCH_JUMP_MIN_ZOOM = 1
 const SEARCH_JUMP_DURATION_MS = 300
+// Viewport animation for keyboard pan/zoom (0 under reduced motion).
+const CANVAS_KEY_DURATION_MS = 120
 
 const DEFAULT_NAMESPACE = 'default'
 const DEFAULT_PROTOCOL: ProtocolFilterValue = 'all'
@@ -275,7 +277,8 @@ function App() {
   // edge keeps a route that still fits its persisted endpoints when ELK's
   // fresh one no longer does (selectRoutes in lib/layout.ts).
   const layoutMemoryRef = useRef<LayoutMemory>(EMPTY_LAYOUT_MEMORY)
-  // The graph pane: its size drives the 'auto' band shape (issue #81).
+  // The graph pane: its size drives the 'auto' band shape (issue #81), and
+  // it takes keyboard focus for panning and zooming.
   const canvasRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -766,7 +769,35 @@ function App() {
     })
   }
 
+  // Keyboard navigation on the focused canvas (issue #81, replacing the
+  // on-canvas pan arrows): arrows pan, + / - zoom, 0 fits. Keys aimed at a
+  // workload (React Flow moves a focused node with the arrows; Enter/Space
+  // select it, #75) or typed into a field are left alone, and `/` and
+  // Escape (#77) aren't canvas keys, so they still reach the window handler.
+  function handleCanvasKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (!flowInstance || event.defaultPrevented || isTextEntry(event.target)) return
+    if (event.target instanceof Element && event.target.closest('.react-flow__node')) return
+    const action = canvasKeyAction(event)
+    if (!action) return
+    event.preventDefault()
+    const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : CANVAS_KEY_DURATION_MS
+    if (action.type === 'pan') {
+      const { x, y, zoom } = flowInstance.getViewport()
+      flowInstance.setViewport({ x: x + action.dx, y: y + action.dy, zoom }, { duration })
+    } else if (action.type === 'zoomIn') flowInstance.zoomIn({ duration })
+    else if (action.type === 'zoomOut') flowInstance.zoomOut({ duration })
+    else flowInstance.fitView({ duration })
+  }
 
+  // React Flow's pane swallows mousedown (d3-zoom), so clicking empty canvas
+  // wouldn't otherwise give it focus; do it explicitly so arrow keys work
+  // right after a click. focusVisible: false keeps the focus ring a
+  // keyboard-only cue (browsers that ignore the option may still show it).
+  function handleCanvasPointerDown(event: React.PointerEvent<HTMLElement>) {
+    if (event.target instanceof Element && event.target.closest('.react-flow__pane')) {
+      canvasRef.current?.focus({ preventScroll: true, focusVisible: false })
+    }
+  }
 
   return (
     <div className="app" data-theme={resolvedTheme} ref={appRef}>
@@ -836,6 +867,12 @@ function App() {
           ref={canvasRef}
           className="app__canvas"
           data-namespace-bands={displayOptions.namespaceBands ? 'shown' : 'hidden'}
+          // Focusable only while there's a graph to navigate.
+          tabIndex={hasGraph ? 0 : undefined}
+          aria-label={hasGraph ? 'Topology graph' : undefined}
+          aria-keyshortcuts={hasGraph ? 'ArrowUp ArrowDown ArrowLeft ArrowRight + - 0' : undefined}
+          onKeyDown={hasGraph ? handleCanvasKeyDown : undefined}
+          onPointerDown={hasGraph ? handleCanvasPointerDown : undefined}
         >
           {state.status === 'loading' && (
             <div className="app__status app__status--loading">
@@ -885,8 +922,9 @@ function App() {
               >
                 <Background color="var(--rf-background-dot)" />
                 <SemanticZoom target={canvasRef} />
-                <Controls showInteractive={false} />
-                <PanControls />
+                <Controls showInteractive={false}>
+                  <ZoomReadout />
+                </Controls>
               </ReactFlow>
             </EdgeDisplayContext.Provider>
           )}

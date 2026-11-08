@@ -623,6 +623,17 @@ body,
   min-width: 0;
 }
 
+/* The canvas takes focus for keyboard pan/zoom (issue #81); the ring sits
+   inside its edge so the flows panel's border never hides it. */
+.app__canvas:focus {
+  outline: none;
+}
+
+.app__canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .app__flows-resize-handle {
   flex: none;
   width: 6px;
@@ -1216,57 +1227,28 @@ body,
   fill: var(--text-muted);
 }
 
-/* Directional pan buttons, laid out as a d-pad in the canvas's bottom-right
-   corner so browser-level zoom/scroll is never required to navigate the
-   graph — see components/PanControls.tsx. */
-.pan-controls {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  z-index: 5;
-  display: grid;
-  grid-template-columns: repeat(3, 28px);
-  grid-template-rows: repeat(2, 28px);
-  gap: 2px;
-}
-
-.pan-controls__btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* Zoom percentage under the zoom/fit buttons (components/ZoomControls.tsx).
+   Same 26px column; text instead of an icon. */
+.react-flow__controls-button.zoom-readout {
+  height: auto;
+  min-height: 26px;
   padding: 0;
-  font-size: 11px;
-  line-height: 1;
+  font:
+    10px/1 ui-monospace,
+    Menlo,
+    monospace;
+  font-variant-numeric: tabular-nums;
   color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  cursor: pointer;
+  border-bottom: none;
 }
 
-.pan-controls__btn:hover {
-  background: var(--surface-hover);
+.react-flow__controls-button.zoom-readout:hover {
   color: var(--text);
 }
 
-.pan-controls__btn--up {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.pan-controls__btn--left {
-  grid-column: 1;
-  grid-row: 2;
-}
-
-.pan-controls__btn--right {
-  grid-column: 3;
-  grid-row: 2;
-}
-
-.pan-controls__btn--down {
-  grid-column: 2;
-  grid-row: 2;
+.react-flow__controls-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* Default (unselected) flow edges use a muted purple (--edge-stroke) so
