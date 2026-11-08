@@ -67,6 +67,8 @@ import {
   clearNodePositions,
   loadEdgeRoutes,
   saveEdgeRoutes,
+  loadBandShape,
+  saveBandShape,
   positionScopeKey,
   type NodePositionMap,
 } from './lib/nodePositions'
@@ -143,10 +145,11 @@ type LayoutMemory = {
 
 const EMPTY_LAYOUT_MEMORY: LayoutMemory = { scope: null, shapeKey: null, positions: {}, routes: new Map() }
 
-function saveLayoutMemory(memory: LayoutMemory) {
+function saveLayoutMemory(namespace: string, memory: LayoutMemory) {
   if (!memory.scope) return
   saveNodePositions(memory.scope, memory.positions)
   saveEdgeRoutes(memory.scope, memory.routes)
+  saveBandShape(namespace, memory.shapeKey)
 }
 
 async function loadTopology(
@@ -404,13 +407,16 @@ function App() {
     // Persisted positions are per namespace scope *and* (resolved) band
     // arrangement (see positionScopeKey), so switching arrangement re-lays
     // out (issue #51); loadTopology reads them for whichever scope applies.
-    layoutMemoryRef.current = EMPTY_LAYOUT_MEMORY
+    // The shape this scope was last shown in is preferred, so a reload
+    // lands on the same grid (and the positions dragged in it) unless the
+    // canvas has changed enough to make another one clearly better.
+    layoutMemoryRef.current = { ...EMPTY_LAYOUT_MEMORY, shapeKey: loadBandShape(namespaceParam) }
 
     loadTopology(namespaceParam, protocol, source, bandArrangement, canvasSize(), layoutMemoryRef.current)
       .then(({ memory, ...result }) => {
         if (cancelled) return
         layoutMemoryRef.current = memory
-        saveLayoutMemory(memory)
+        saveLayoutMemory(namespaceParam, memory)
         setState({ status: 'ready', ...result })
       })
       .catch((err: unknown) => {
@@ -434,7 +440,7 @@ function App() {
         .then(({ memory, ...result }) => {
           if (cancelledRef.current) return
           layoutMemoryRef.current = memory
-          saveLayoutMemory(memory)
+          saveLayoutMemory(namespaceParam, memory)
           setState({ status: 'ready', ...result })
         })
         .catch((err: unknown) => {
@@ -746,7 +752,7 @@ function App() {
     }
     const memory = layoutMemoryRef.current
     layoutMemoryRef.current = { ...memory, positions: { ...memory.positions, ...positions } }
-    saveLayoutMemory(layoutMemoryRef.current)
+    saveLayoutMemory(namespaceParam, layoutMemoryRef.current)
   }
 
   // Discards every persisted position for the current scope and re-lays-out
@@ -764,7 +770,7 @@ function App() {
       clearNodePositions(scope)
       const { nodes, edges, positions, routes } = finishLayout(plan)
       layoutMemoryRef.current = { scope, shapeKey: plan.shapeKey, positions: positionsToRecord(positions), routes }
-      saveLayoutMemory(layoutMemoryRef.current)
+      saveLayoutMemory(namespaceParam, layoutMemoryRef.current)
       setState({ status: 'ready', nodes, edges, graph, fetchedAt })
     })
   }

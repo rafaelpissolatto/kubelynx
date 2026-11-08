@@ -34,6 +34,33 @@ export function positionScopeKey(namespaceKey: string, arrangementKey: string): 
   return `${namespaceKey}|${arrangementKey}`
 }
 
+// The band shape a namespace scope was last laid out in (bandShapeKey, e.g.
+// 'rows4'; null for a single-namespace view). Fed back to 'auto' as its
+// preferred shape on the next load, so a reload — even one where a workload
+// came or went and nudged the band sizes — lands on the same grid and so
+// on the same positions scope as before, rather than flipping to a
+// near-equal shape whose positions were never dragged.
+const SHAPE_STORAGE_PREFIX = 'kubelynx.bandShape.'
+
+export function loadBandShape(namespaceKey: string): string | null {
+  try {
+    const raw = localStorage.getItem(`${SHAPE_STORAGE_PREFIX}${namespaceKey}`)
+    // Only ever compared against freshly computed shape keys, so an unknown
+    // value simply matches nothing.
+    return raw && /^(vertical|horizontal|rows\d+|columns\d+)$/.test(raw) ? raw : null
+  } catch {
+    return null
+  }
+}
+
+export function saveBandShape(namespaceKey: string, shapeKey: string | null): void {
+  try {
+    if (shapeKey) localStorage.setItem(`${SHAPE_STORAGE_PREFIX}${namespaceKey}`, shapeKey)
+  } catch {
+    // Without it a reload just picks the best shape afresh.
+  }
+}
+
 // localStorage access is wrapped in try/catch for the same reason as
 // resizablePanel.ts/theme.ts/bandArrangement.ts: private browsing, disabled
 // storage, or quota errors shouldn't break the app, they just mean layout
