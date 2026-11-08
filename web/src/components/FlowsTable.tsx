@@ -5,11 +5,15 @@ import { matchesFlowFilter } from '../lib/flowFilter'
 
 interface FlowsTableProps {
   flows: Flow[]
+  // Flows the Display ▾ low-traffic cutoff keeps off the graph (issue #76).
+  // They stay listed — the table is the complete record — but muted, with a
+  // count above the table, and selecting one draws it on the graph anyway.
+  hiddenIds?: Set<string>
   selectedId: string | null
   onSelect: (id: string) => void
 }
 
-export function FlowsTable({ flows, selectedId, onSelect }: FlowsTableProps) {
+export function FlowsTable({ flows, hiddenIds, selectedId, onSelect }: FlowsTableProps) {
   const [filterText, setFilterText] = useState('')
 
   // Filtering happens before sorting so it never disturbs the rate
@@ -40,6 +44,11 @@ export function FlowsTable({ flows, selectedId, onSelect }: FlowsTableProps) {
         value={filterText}
         onChange={(e) => setFilterText(e.target.value)}
       />
+      {hiddenIds && hiddenIds.size > 0 && (
+        <p className="flows-table__note">
+          {hiddenIds.size} of {flows.length} flows hidden on the graph. Select one to show it.
+        </p>
+      )}
       {sorted.length === 0 ? (
         <p className="flows-table__empty">No flows match "{filterText}".</p>
       ) : (
@@ -60,10 +69,12 @@ export function FlowsTable({ flows, selectedId, onSelect }: FlowsTableProps) {
             {sorted.map((flow) => {
               const id = flowId(flow)
               const selected = id === selectedId
+              const hidden = hiddenIds?.has(id) ?? false
               return (
                 <tr
                   key={id}
-                  className="flows-table__row"
+                  className={hidden ? 'flows-table__row flows-table__row--hidden' : 'flows-table__row'}
+                  title={hidden ? 'Hidden on the graph (Display: hide low-traffic flows)' : undefined}
                   aria-selected={selected}
                   onClick={() => onSelect(id)}
                 >

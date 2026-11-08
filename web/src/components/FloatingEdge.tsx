@@ -1,7 +1,9 @@
-import { useState, type CSSProperties } from 'react'
+import { useContext, useState, type CSSProperties } from 'react'
 import { BaseEdge, useInternalNode, useStore, getSmoothStepPath, type EdgeProps, type InternalNode } from '@xyflow/react'
 import { getEdgeParams } from '../lib/floatingEdge'
 import type { TrafficDots } from '../lib/layout'
+import type { Flow } from '../lib/topology'
+import { EdgeDisplayContext, edgeLabelText } from '../lib/displayOptions'
 import {
   chevronMark,
   chooseRoute,
@@ -49,9 +51,9 @@ const NODE_GAP = 3
 const MARK_MIN_ZOOM = 0.6
 const MARK_MAX_ZOOM = 1.25
 
-// Rough size of the PROTOCOL :PORT label (React Flow's 10px edge text plus
-// labelBgPadding below), in flow units — close enough to keep the chevron
-// off it without measuring the DOM.
+// Rough size of the shown label — PROTOCOL :PORT or a rate, per Display ▾
+// (React Flow's 10px edge text plus labelBgPadding below), in flow units —
+// close enough to keep the chevron off it without measuring the DOM.
 function labelBox(label: unknown, x: number, y: number, scale: number): KeepClear | null {
   if (typeof label !== 'string' || label === '') return null
   return { x, y, halfWidth: label.length * 3 + 6, halfHeight: 9, gap: LABEL_GAP * scale }
@@ -204,6 +206,8 @@ function DirectionMarks({
 
 export function FloatingEdge({ id, source, target, style, label, selected, data }: EdgeProps) {
   const [hovered, setHovered] = useState(false)
+  // Display ▾ (issue #76): what the label says, and whether dots run.
+  const display = useContext(EdgeDisplayContext)
   const sourceNode = useInternalNode(source)
   const targetNode = useInternalNode(target)
   const route = data?.route as EdgeRoute | undefined
@@ -226,8 +230,12 @@ export function FloatingEdge({ id, source, target, style, label, selected, data 
     ? roundedPolylinePath(routePoints, BORDER_RADIUS)
     : floatingElbowPath(sourceNode, targetNode)
 
-  const showLabel = hovered || selected
-  const trafficDots = data?.trafficDots as TrafficDots | null | undefined
+  const flow = data?.flow as Flow | undefined
+  const labelText = flow ? edgeLabelText(flow, display.edgeLabels) : display.edgeLabels === 'none' ? undefined : label
+  const showLabel = (hovered || selected) && !!labelText
+  // With animation off the dots aren't rendered at all, so no <animateMotion>
+  // clock keeps ticking for them (hiding them with CSS would not stop it).
+  const trafficDots = display.trafficAnimation ? (data?.trafficDots as TrafficDots | null | undefined) : null
   // The elbow's corners, recovered from its path, so both geometries place
   // their direction marks the same way.
   const vertices = routePoints ?? pathVertices(path)
@@ -246,13 +254,13 @@ export function FloatingEdge({ id, source, target, style, label, selected, data 
         source={source}
         target={target}
         edgeStyle={style}
-        label={showLabel ? { text: label, x: labelX, y: labelY } : null}
+        label={showLabel ? { text: labelText, x: labelX, y: labelY } : null}
       />
       <BaseEdge
         id={id}
         path={path}
         style={style}
-        label={showLabel ? label : undefined}
+        label={showLabel ? labelText : undefined}
         labelX={showLabel ? labelX : undefined}
         labelY={showLabel ? labelY : undefined}
         labelBgPadding={[6, 3]}

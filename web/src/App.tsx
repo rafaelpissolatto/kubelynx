@@ -31,6 +31,7 @@ import { SourceSelector } from './components/SourceSelector'
 import { FlowsTable } from './components/FlowsTable'
 import { FlowDetailPanel } from './components/FlowDetailPanel'
 import { SettingsMenu } from './components/SettingsMenu'
+import { DisplayMenu } from './components/DisplayMenu'
 import { RefreshStatus } from './components/RefreshStatus'
 import { WorkloadPanel } from './components/WorkloadPanel'
 import { touchesWorkload } from './lib/workloadSelection'
@@ -59,6 +60,13 @@ import {
   type NodePositionMap,
 } from './lib/nodePositions'
 import type { EdgeRoute } from './lib/edgeRoute'
+import {
+  EdgeDisplayContext,
+  hiddenFlowIds,
+  loadDisplayOptions,
+  saveDisplayOptions,
+  type DisplayOptions,
+} from './lib/displayOptions'
 
 const FLOWS_PANEL_RESIZE_STEP = 20
 
@@ -192,6 +200,9 @@ function App() {
   // truth for the accent color.
   const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT)
   const [bandArrangement, setBandArrangement] = useState<BandArrangement>(loadBandArrangement)
+  // Display ▾ (issue #76): applied on top of the laid-out graph, never fed
+  // into layout or the fetch, so changing one never re-runs either.
+  const [displayOptions, setDisplayOptions] = useState<DisplayOptions>(loadDisplayOptions)
   // Mirrors what's in localStorage for the current position scope (see
   // lib/nodePositions.ts) — read fresh whenever the namespace scope changes,
   // then kept in sync by every layout run and every drag so a "Rearrange"
@@ -242,6 +253,11 @@ function App() {
   function handleBandArrangementChange(next: BandArrangement) {
     setBandArrangement(next)
     saveBandArrangement(next)
+  }
+
+  function handleDisplayOptionsChange(next: DisplayOptions) {
+    setDisplayOptions(next)
+    saveDisplayOptions(next)
   }
 
   useEffect(() => {
@@ -401,20 +417,31 @@ function App() {
     return state.nodes.map((node) => (node.id === selectedWorkloadId ? { ...node, selected: true } : node))
   }, [state, selectedWorkloadId])
 
+  // Flows the low-traffic cutoff takes off the canvas (recomputed on every
+  // refresh, per Flow.metric — see hiddenFlowIds). They stay in the flows
+  // table, marked, with a count; a hidden flow selected from there is drawn
+  // anyway so the selection is never invisible.
+  const hiddenFlows = useMemo(
+    () => (state.status === 'ready' ? hiddenFlowIds(state.graph.edges, displayOptions.lowTrafficCutoff) : new Set<string>()),
+    [state, displayOptions.lowTrafficCutoff],
+  )
+
   const renderedEdges = useMemo(() => {
     if (state.status !== 'ready') return []
+    const edges =
+      hiddenFlows.size === 0 ? state.edges : state.edges.filter((edge) => !hiddenFlows.has(edge.id) || edge.id === selectedFlowId)
     if (!selectedFlowId) {
-      if (!selectedWorkloadId) return state.edges
+      if (!selectedWorkloadId) return edges
       // A selected workload with no flow picked yet: its own flows stay at
       // full strength and the rest recede, so the panel's lists are easy to
       // trace on the graph.
-      return state.edges.map((edge) =>
+      return edges.map((edge) =>
         edge.source === selectedWorkloadId || edge.target === selectedWorkloadId
           ? edge
           : { ...edge, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
       )
     }
-    return state.edges.map((edge) =>
+    return edges.map((edge) =>
       edge.id === selectedFlowId
         ? {
             ...edge,
@@ -425,7 +452,10 @@ function App() {
           }
         : { ...edge, selected: false, style: { ...edge.style, opacity: UNSELECTED_FLOW_OPACITY } },
     )
-  }, [state, selectedFlowId, selectedWorkloadId, accentColor])
+  }, [state, hiddenFlows, selectedFlowId, selectedWorkloadId, accentColor])
+
+  const { edgeLabels, trafficAnimation } = displayOptions
+  const edgeDisplay = useMemo(() => ({ edgeLabels, trafficAnimation }), [edgeLabels, trafficAnimation])
 
   function toggleSelectedFlow(id: string) {
     setSelectedFlowId((prev) => (prev === id ? null : id))
@@ -618,8 +648,7 @@ function App() {
         {/* Quiet status line: what the current scope returned. */}
         <span className="app__summary">{summary}</span>
         <div className="app__zone app__zone--view" role="group" aria-label="View">
-          {/* Display ▾ (#76) mounts here, first in the zone, as a
-              <HeaderMenu label="Display"> like SettingsMenu. */}
+          <DisplayMenu options={displayOptions} onChange={handleDisplayOptionsChange} />
           <button
             type="button"
             className="header-control"
@@ -650,7 +679,7 @@ function App() {
         </div>
       </header>
       <div className="app__body">
-        <main className="app__canvas">
+        <main className="app__canvas" data-namespace-bands={displayOptions.namespaceBands ? 'shown' : 'hidden'}>
           {state.status === 'loading' && (
             <div className="app__status app__status--loading">
               <span className="app__spinner" aria-hidden="true" />
@@ -682,23 +711,25 @@ function App() {
             </div>
           )}
           {state.status === 'ready' && state.nodes.length > 0 && (
-            <ReactFlow
-              nodes={renderedNodes}
-              edges={renderedEdges}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              fitView
-              proOptions={{ hideAttribution: true }}
-              selectNodesOnDrag={false}
-              onNodesChange={handleNodesChange}
-              onNodeDragStop={handleNodeDragStop}
-              onEdgeClick={handleEdgeClick}
-              onPaneClick={clearSelection}
-            >
-              <Background color="var(--rf-background-dot)" />
-              <Controls showInteractive={false} />
-              <PanControls />
-            </ReactFlow>
+            <EdgeDisplayContext.Provider value={edgeDisplay}>
+              <ReactFlow
+                nodes={renderedNodes}
+                edges={renderedEdges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                fitView
+                proOptions={{ hideAttribution: true }}
+                selectNodesOnDrag={false}
+                onNodesChange={handleNodesChange}
+                onNodeDragStop={handleNodeDragStop}
+                onEdgeClick={handleEdgeClick}
+                onPaneClick={clearSelection}
+              >
+                <Background color="var(--rf-background-dot)" />
+                <Controls showInteractive={false} />
+                <PanControls />
+              </ReactFlow>
+            </EdgeDisplayContext.Provider>
           )}
         </main>
         <div
@@ -727,6 +758,7 @@ function App() {
           ) : (
             <FlowsTable
               flows={state.status === 'ready' ? state.graph.edges : []}
+              hiddenIds={hiddenFlows}
               selectedId={selectedFlowId}
               onSelect={toggleSelectedFlow}
             />

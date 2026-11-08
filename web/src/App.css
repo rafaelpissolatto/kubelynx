@@ -322,11 +322,12 @@ body,
 
 /* Segmented controls: one bordered track per choice group, the active
    option filled in. Used for source and protocol on the bar, and for theme
-   and band arrangement inside Settings. */
+   and band arrangement inside Settings, and for every choice in Display. */
 .protocol-filter,
 .source-selector,
 .theme-toggle,
-.band-arrangement-toggle {
+.band-arrangement-toggle,
+.display-choice {
   display: inline-flex;
   box-sizing: border-box;
   height: 28px;
@@ -340,7 +341,8 @@ body,
 .protocol-filter__chip,
 .source-selector__chip,
 .theme-toggle__chip,
-.band-arrangement-toggle__chip {
+.band-arrangement-toggle__chip,
+.display-choice__chip {
   font: inherit;
   font-size: 12px;
   color: var(--text-muted);
@@ -355,7 +357,8 @@ body,
 .protocol-filter__chip:hover,
 .source-selector__chip:hover,
 .theme-toggle__chip:hover,
-.band-arrangement-toggle__chip:hover {
+.band-arrangement-toggle__chip,
+.display-choice__chip:hover {
   color: var(--text);
   background: var(--surface-hover);
 }
@@ -363,7 +366,8 @@ body,
 .protocol-filter__chip[aria-pressed='true'],
 .source-selector__chip[aria-pressed='true'],
 .theme-toggle__chip[aria-pressed='true'],
-.band-arrangement-toggle__chip[aria-pressed='true'] {
+.band-arrangement-toggle__chip,
+.display-choice__chip[aria-pressed='true'] {
   color: var(--text);
   background: var(--surface-selected);
   border-color: var(--border-selected);
@@ -372,7 +376,8 @@ body,
 .protocol-filter__chip:focus-visible,
 .source-selector__chip:focus-visible,
 .theme-toggle__chip:focus-visible,
-.band-arrangement-toggle__chip:focus-visible {
+.band-arrangement-toggle__chip,
+.display-choice__chip:focus-visible {
   outline-offset: 1px;
 }
 
@@ -755,6 +760,26 @@ body,
   color: var(--accent);
 }
 
+/* Inside Display every track spans the panel and its options share it
+   equally, so the four rows line up as one column of controls. */
+.display-choice__chip {
+  flex: 1;
+}
+
+.flows-table__note {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+/* A flow the Display low-traffic cutoff keeps off the graph: still listed,
+   but quieter than the flows that are drawn. */
+.flows-table__row--hidden:not([aria-selected='true']) {
+  color: var(--text-muted);
+}
+
 .flows-table__empty {
   padding: 16px;
   color: var(--text-muted);
@@ -1080,6 +1105,13 @@ body,
   .flow-edge__traffic-dot {
     display: none;
   }
+}
+
+/* Display -> Namespace bands: Hide (issue #76). Visual only: the band
+   nodes keep their place in the layout, they just aren't painted, and their
+   drag handle goes inert so nothing invisible can be grabbed. */
+.app__canvas[data-namespace-bands='hidden'] .namespace-band {
+  visibility: hidden;
 }
 
 .namespace-band__header {
