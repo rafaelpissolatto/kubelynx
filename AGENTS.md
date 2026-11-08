@@ -14,4 +14,4 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 
 ### Team personas
 
-When work is split across parallel agents, each one adopts a persona: a Lead (architecture, ADRs, plan docs, cross-cutting review) plus two Senior SREs with disjoint ownership (backend/telemetry vs. frontend/rendering). See `docs/agents/personas.md`.
+When work is split across parallel agents, each one adopts a persona: a Lead (architecture, ADRs, plan docs, cross-cutting review) plus two Senior SREs with disjoint ownership (backend/telemetry vs. frontend/rendering). Seniors always work in a git worktree on a branch named `<type>/<issue#>-<slug>`, and they message each other and the lead (`swe-lead`) at start, on shared-file changes and when ready for review. The lead owns issue updates and reviews. See `docs/agents/personas.md`.
