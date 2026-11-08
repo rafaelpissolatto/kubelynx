@@ -1,0 +1,79 @@
+name: auto-release
+
+# Every merge to main whose ci run is green gets the next SemVer tag, derived
+# from Conventional Commit subjects since the last stable tag
+# (.github/scripts/next-version.sh), and is then published by release.yml.
+# Merges with only docs/chore/ci/test/style/build commits are not released.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump (auto reads the commit messages)
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+permissions: {}
+
+# Queue, never cancel: a run cut off after pushing its tag would leave a tag
+# with nothing published. A queued run computes from the latest tag, so it
+# still covers every commit merged in between.
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+      - id: next
+        env:
+          BUMP: ${{ inputs.bump || 'auto' }}
+        run: |
+          if existing=$(git describe --tags --exact-match --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-*' HEAD 2>/dev/null); then
+            echo "HEAD is already released as $existing, nothing to do." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          tag=$(.github/scripts/next-version.sh "$BUMP")
+          if [[ -z "$tag" ]]; then
+            echo "No releasable commits since the last tag, skipping release." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing **$tag** from \`$(git rev-parse --short HEAD)\`." | tee -a "$GITHUB_STEP_SUMMARY"
+      - if: steps.next.outputs.tag != ''
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "refs/tags/$TAG"
+
+  release:
+    needs: version
+    if: needs.version.outputs.tag != ''
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+    secrets: inherit
