@@ -1,0 +1,10 @@
+{{- if .Values.protocol.ports }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubelynx.fullname" . }}-protocol
+  labels:
+    {{- include "kubelynx.labels" . | nindent 4 }}
+data:
+  ports.json: {{ include "kubelynx.protocolPortsJSON" . | quote }}
+{{- end }}

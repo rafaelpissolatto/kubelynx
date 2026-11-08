@@ -9,6 +9,9 @@
 {{- if and $tokenSecret.name $basicAuth.existingSecret.name }}
 {{- fail "prometheus.bearerToken and prometheus.basicAuth are mutually exclusive; configure only one" }}
 {{- end }}
+{{- $tcpAllowlist := .Values.cardinality.tcpPortAllowlist }}
+{{- $protocolPorts := .Values.protocol.ports }}
+{{- $hasMounts := or $tokenSecret.name $basicAuth.existingSecret.name $tcpAllowlist $protocolPorts }}
 {{- $refreshInterval := toString .Values.refreshInterval }}
 {{- if not (regexMatch "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$" $refreshInterval) }}
 {{- fail (printf "refreshInterval must be a Go duration such as 15s or 1m30s, got %q" $refreshInterval) }}
@@ -26,9 +29,18 @@ spec:
       {{- include "kubelynx.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
+      {{- if or .Values.podAnnotations $tcpAllowlist $protocolPorts }}
       annotations:
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- /* The binary reads these files once at startup: roll the pod when they change. */}}
+        {{- if $tcpAllowlist }}
+        checksum/cardinality: {{ include "kubelynx.tcpPortAllowlistJSON" . | sha256sum }}
+        {{- end }}
+        {{- if $protocolPorts }}
+        checksum/protocol: {{ include "kubelynx.protocolPortsJSON" . | sha256sum }}
+        {{- end }}
       {{- end }}
       labels:
         {{- include "kubelynx.labels" . | nindent 8 }}
@@ -60,6 +72,12 @@ spec:
             - {{ printf "--prometheus-basic-auth-username=%s" $basicAuth.username | quote }}
             - --prometheus-basic-auth-password-file=/var/run/secrets/kubelynx/prometheus-basic-auth/password
             {{- end }}
+            {{- if $tcpAllowlist }}
+            - --tcp-port-allowlist-file=/var/run/kubelynx/cardinality/tcp-port-allowlist.json
+            {{- end }}
+            {{- if $protocolPorts }}
+            - --protocol-ports-file=/var/run/kubelynx/protocol/ports.json
+            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -79,7 +97,7 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if or $tokenSecret.name $basicAuth.existingSecret.name }}
+          {{- if $hasMounts }}
           # Whole directories, never a subPath: kubelet only updates directory
           # mounts when the Secret rotates.
           volumeMounts:
@@ -93,8 +111,18 @@ spec:
               mountPath: /var/run/secrets/kubelynx/prometheus-basic-auth
               readOnly: true
             {{- end }}
+            {{- if $tcpAllowlist }}
+            - name: cardinality
+              mountPath: /var/run/kubelynx/cardinality
+              readOnly: true
+            {{- end }}
+            {{- if $protocolPorts }}
+            - name: protocol
+              mountPath: /var/run/kubelynx/protocol
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if or $tokenSecret.name $basicAuth.existingSecret.name }}
+      {{- if $hasMounts }}
       volumes:
         {{- if $tokenSecret.name }}
         - name: prometheus-token
@@ -111,6 +139,22 @@ spec:
             items:
               - key: {{ $basicAuth.existingSecret.key | default "password" }}
                 path: password
+        {{- end }}
+        {{- if $tcpAllowlist }}
+        - name: cardinality
+          configMap:
+            name: {{ include "kubelynx.fullname" . }}-cardinality
+            items:
+              - key: tcp-port-allowlist.json
+                path: tcp-port-allowlist.json
+        {{- end }}
+        {{- if $protocolPorts }}
+        - name: protocol
+          configMap:
+            name: {{ include "kubelynx.fullname" . }}-protocol
+            items:
+              - key: ports.json
+                path: ports.json
         {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
