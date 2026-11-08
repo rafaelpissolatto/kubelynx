@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Verifies the rendered Helm chart keeps the promises KubeLynx makes about
 # itself: exactly one Deployment and one Service, no RBAC, no Kubernetes API
-# token, and the Prometheus bearer token wired as a rotatable file mount.
+# token, and the Prometheus bearer token / Basic-auth password wired as
+# rotatable file mounts that can't both be configured.
 # Needs only `helm` — no cluster. Run from the repo root (or set CHART).
 set -euo pipefail
 
@@ -55,6 +56,59 @@ if grep -qE '^ *subPath:' <<<"$WITH_TOKEN"; then
   fail "bearer token is mounted with subPath; Secret rotation needs a directory mount"
 fi
 
+if grep -q -- '--prometheus-basic-auth' <<<"$MANIFESTS"; then
+  fail "basic auth flags rendered with default values"
+fi
+if grep -q -- '--prometheus-basic-auth' <<<"$WITH_TOKEN"; then
+  fail "basic auth flags rendered with only a bearer token configured"
+fi
+if grep -q 'prometheus-basic-auth' <<<"$WITH_TOKEN"; then
+  fail "basic auth volume rendered with only a bearer token configured"
+fi
+
+if ! WITH_BASIC=$(render --set prometheus.basicAuth.username=root@example.com \
+  --set prometheus.basicAuth.existingSecret.name=prom-basic-auth); then
+  echo "FAIL: chart doesn't render with basic auth configured"
+  exit 1
+fi
+if ! grep -q -- '"--prometheus-basic-auth-username=root@example.com"' <<<"$WITH_BASIC"; then
+  fail "basic auth username flag missing when basic auth is configured"
+fi
+if ! grep -q -- '--prometheus-basic-auth-password-file=/var/run/secrets/kubelynx/prometheus-basic-auth/password' <<<"$WITH_BASIC"; then
+  fail "basic auth password file flag missing when basic auth is configured"
+fi
+if ! grep -q 'secretName: prom-basic-auth' <<<"$WITH_BASIC"; then
+  fail "basic auth Secret volume missing when basic auth is configured"
+fi
+if ! grep -q 'key: password' <<<"$WITH_BASIC"; then
+  fail "basic auth Secret key must default to password"
+fi
+if grep -qE '^ *subPath:' <<<"$WITH_BASIC"; then
+  fail "basic auth password is mounted with subPath; Secret rotation needs a directory mount"
+fi
+if grep -q -- '--prometheus-bearer-token-file' <<<"$WITH_BASIC"; then
+  fail "bearer token flag rendered with only basic auth configured"
+fi
+if ! WITH_BASIC_KEY=$(render --set prometheus.basicAuth.username=root@example.com \
+  --set prometheus.basicAuth.existingSecret.name=openobserve-credentials \
+  --set prometheus.basicAuth.existingSecret.key=ZO_ROOT_USER_PASSWORD) \
+  || ! grep -q 'key: ZO_ROOT_USER_PASSWORD' <<<"$WITH_BASIC_KEY"; then
+  fail "basic auth Secret key isn't configurable"
+fi
+
+# Half-configured or ambiguous auth must fail at render time.
+if render --set prometheus.basicAuth.username=root@example.com >/dev/null 2>&1; then
+  fail "chart accepted prometheus.basicAuth.username without existingSecret.name"
+fi
+if render --set prometheus.basicAuth.existingSecret.name=prom-basic-auth >/dev/null 2>&1; then
+  fail "chart accepted prometheus.basicAuth.existingSecret.name without username"
+fi
+if render --set prometheus.bearerToken.existingSecret.name=prom-token \
+  --set prometheus.basicAuth.username=root@example.com \
+  --set prometheus.basicAuth.existingSecret.name=prom-basic-auth >/dev/null 2>&1; then
+  fail "chart accepted bearer token and basic auth together"
+fi
+
 # Values the chart must reject at render time rather than crash-loop on.
 for bad in 'prometheus.url=' 'refreshInterval=abc' 'refreshInterval=30'; do
   if render --set "$bad" >/dev/null 2>&1; then
@@ -68,4 +122,4 @@ fi
 if [[ "$FAILED" == "true" ]]; then
   exit 1
 fi
-echo "PASS: chart renders one Deployment + one Service, no RBAC, and wires the bearer token and refresh interval correctly."
+echo "PASS: chart renders one Deployment + one Service, no RBAC, and wires bearer/basic auth and the refresh interval correctly."

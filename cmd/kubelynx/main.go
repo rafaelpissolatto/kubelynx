@@ -17,12 +17,14 @@ import (
 
 func main() {
 	var (
-		listenAddr           = flag.String("listen-addr", ":8080", "address to serve the KubeLynx API on")
-		promURL              = flag.String("prometheus-url", "http://localhost:9090", "base URL of the Prometheus server to query")
-		promBearerTokenFile  = flag.String("prometheus-bearer-token-file", "", `path to a file containing a bearer token sent as "Authorization: Bearer <token>" on every Prometheus request; re-read on each request so rotated Kubernetes Secrets apply without a restart; omit for an unauthenticated Prometheus`)
-		protocolPortsFile    = flag.String("protocol-ports-file", "", `path to a JSON file overriding the default HTTP/gRPC port classification used by the protocol filter, e.g. {"http":["8081"],"grpc":["50052"]}; omit to use the built-in defaults`)
-		tcpPortAllowlistFile = flag.String("tcp-port-allowlist-file", "", `path to a JSON file overriding the default TCP "known ports" allow-list used to bound port cardinality, e.g. {"tcp":["80","443","8080"]}; TCP ports outside this list (and UDP ports other than 53/DNS) are aggregated into a single "multiple" flow instead of one per port; omit to use the built-in defaults`)
-		refreshInterval      = flag.Duration("refresh-interval", 15*time.Second, "how often the UI polls /api/topology; served to the frontend via /api/config (a ?refreshInterval=<ms> URL param still overrides it)")
+		listenAddr                = flag.String("listen-addr", ":8080", "address to serve the KubeLynx API on")
+		promURL                   = flag.String("prometheus-url", "http://localhost:9090", "base URL of the Prometheus server to query")
+		promBearerTokenFile       = flag.String("prometheus-bearer-token-file", "", `path to a file containing a bearer token sent as "Authorization: Bearer <token>" on every Prometheus request; re-read on each request so rotated Kubernetes Secrets apply without a restart; omit for an unauthenticated Prometheus`)
+		promBasicAuthUsername     = flag.String("prometheus-basic-auth-username", "", "username for HTTP Basic auth to Prometheus; requires -prometheus-basic-auth-password-file; can't be combined with -prometheus-bearer-token-file or credentials in -prometheus-url")
+		promBasicAuthPasswordFile = flag.String("prometheus-basic-auth-password-file", "", "path to a file containing the HTTP Basic auth password for Prometheus (surrounding whitespace trimmed); re-read on each request so rotated Kubernetes Secrets apply without a restart; requires -prometheus-basic-auth-username")
+		protocolPortsFile         = flag.String("protocol-ports-file", "", `path to a JSON file overriding the default HTTP/gRPC port classification used by the protocol filter, e.g. {"http":["8081"],"grpc":["50052"]}; omit to use the built-in defaults`)
+		tcpPortAllowlistFile      = flag.String("tcp-port-allowlist-file", "", `path to a JSON file overriding the default TCP "known ports" allow-list used to bound port cardinality, e.g. {"tcp":["80","443","8080"]}; TCP ports outside this list (and UDP ports other than 53/DNS) are aggregated into a single "multiple" flow instead of one per port; omit to use the built-in defaults`)
+		refreshInterval           = flag.Duration("refresh-interval", 15*time.Second, "how often the UI polls /api/topology; served to the frontend via /api/config (a ?refreshInterval=<ms> URL param still overrides it)")
 	)
 	flag.Parse()
 
@@ -33,14 +35,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	prom, err := promclient.New(*promURL, *promBearerTokenFile)
+	prom, err := promclient.New(promclient.Options{
+		URL:                   *promURL,
+		BearerTokenFile:       *promBearerTokenFile,
+		BasicAuthUsername:     *promBasicAuthUsername,
+		BasicAuthPasswordFile: *promBasicAuthPasswordFile,
+	})
 	if err != nil {
 		slog.Error("creating prometheus client", "error", err)
 		os.Exit(1)
-	}
-	promAuth := "none"
-	if *promBearerTokenFile != "" {
-		promAuth = "bearer-file"
 	}
 
 	protocolClasses, err := topology.LoadProtocolClasses(*protocolPortsFile)
@@ -69,7 +72,7 @@ func main() {
 	assets, uiEmbedded := web.Assets()
 	mux.Handle("/", api.UIHandler(assets, uiEmbedded))
 
-	slog.Info("kubelynx listening", "addr", *listenAddr, "prometheus", *promURL, "prometheus_auth", promAuth,
+	slog.Info("kubelynx listening", "addr", *listenAddr, "prometheus", prom.RedactedURL(), "prometheus_auth", prom.AuthMode(),
 		"refresh_interval", *refreshInterval, "ui_embedded", uiEmbedded)
 	if err := http.ListenAndServe(*listenAddr, mux); err != nil {
 		slog.Error("server exited", "error", err)

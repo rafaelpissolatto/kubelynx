@@ -4,7 +4,8 @@ KubeLynx is starting. To open the UI:
   open http://localhost:8080
 
 Querying Prometheus at {{ .Values.prometheus.url }}
-{{- if .Values.prometheus.bearerToken.existingSecret.name }} with a bearer token from Secret "{{ .Values.prometheus.bearerToken.existingSecret.name }}"{{ end }}.
+{{- if .Values.prometheus.bearerToken.existingSecret.name }} with a bearer token from Secret "{{ .Values.prometheus.bearerToken.existingSecret.name }}"{{ end }}
+{{- if .Values.prometheus.basicAuth.existingSecret.name }} with HTTP Basic auth (user "{{ .Values.prometheus.basicAuth.username }}", password from Secret "{{ .Values.prometheus.basicAuth.existingSecret.name }}"){{ end }}.
 
 KubeLynx has no authentication of its own. Before exposing it beyond the
 cluster network, put it behind your ingress auth or a NetworkPolicy.
