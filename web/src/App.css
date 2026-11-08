@@ -619,6 +619,28 @@ body,
   white-space: nowrap;
 }
 
+/* Selected and keyboard-focused workloads (issue #75). Box-shadow and
+   outline rather than a wider border, so the node's box never changes size
+   (see the geometry note on .workload-node above). React Flow's own
+   focus-visible outline is replaced by the offset ring below. */
+.react-flow__node-workload {
+  border-radius: 8px;
+}
+
+.react-flow__node-workload:focus-visible {
+  outline: none;
+}
+
+.react-flow__node-workload.selected .workload-node {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.react-flow__node-workload:focus-visible .workload-node {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Structural only — FloatingEdge computes each edge's real attachment
    point from node geometry, so the handle itself never needs to be seen. */
 .workload-node__handle {
@@ -737,6 +759,189 @@ body,
   padding: 16px;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+/* Workload panel (issue #75) — takes the flows table's place in the right
+   panel while a workload is selected. Same type scale, tokens and row
+   rhythm as the flows table, so swapping between the two doesn't jolt. */
+.workload-panel {
+  font-size: 12px;
+}
+
+.workload-panel__nav {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 8px;
+  background: var(--surface-deep);
+  border-bottom: 1px solid var(--border);
+}
+
+.workload-panel__back {
+  font: inherit;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
+.workload-panel__back:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.workload-panel__back:focus-visible,
+.workload-panel__peer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.workload-panel__header {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workload-panel__name {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workload-panel__facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, auto));
+  justify-content: start;
+  gap: 4px 20px;
+  margin: 0;
+}
+
+.workload-panel__facts dt {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.workload-panel__facts dd {
+  margin: 2px 0 0;
+  font:
+    11px/16px ui-monospace,
+    Menlo,
+    monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workload-panel__section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 12px 6px;
+}
+
+.workload-panel__section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.workload-panel__count {
+  margin-left: 4px;
+  font-weight: 500;
+  color: var(--text-disabled);
+}
+
+.workload-panel__totals {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.workload-panel__peers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.workload-panel__peer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 76px;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 12px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+
+.workload-panel__peer:hover {
+  background: var(--surface);
+}
+
+.workload-panel__peer[aria-pressed='true'] {
+  background: var(--surface-selected);
+  color: var(--accent);
+}
+
+.workload-panel__peer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workload-panel__peer-ns {
+  margin-left: 6px;
+  color: var(--text-muted);
+}
+
+.workload-panel__peer-port {
+  font:
+    11px ui-monospace,
+    Menlo,
+    monospace;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.workload-panel__peer-rate {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.workload-panel__empty {
+  margin: 0;
+  padding: 0 12px 4px;
+  color: var(--text-muted);
+}
+
+.workload-panel__notice {
+  margin: 12px;
+  padding: 10px 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+}
+
+.workload-panel__notice strong {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .flow-detail {
