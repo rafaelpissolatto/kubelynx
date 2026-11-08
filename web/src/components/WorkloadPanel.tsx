@@ -13,6 +13,10 @@ interface WorkloadPanelProps {
   source: string
   selectedFlowId: string | null
   onSelectFlow: (id: string) => void
+  // One-hop focus mode (issue #77): whether the graph dims everything outside
+  // this workload's direct neighborhood.
+  focusMode: boolean
+  onFocusModeChange: (on: boolean) => void
   onClose: () => void
 }
 
@@ -25,6 +29,8 @@ export function WorkloadPanel({
   source,
   selectedFlowId,
   onSelectFlow,
+  focusMode,
+  onFocusModeChange,
   onClose,
 }: WorkloadPanelProps) {
   const headingId = useId()
@@ -36,6 +42,16 @@ export function WorkloadPanel({
       <div className="workload-panel__nav">
         <button type="button" className="workload-panel__back" onClick={onClose}>
           ← All flows
+        </button>
+        <button
+          type="button"
+          className="workload-panel__focus"
+          aria-pressed={focusMode}
+          title={focusMode ? 'Show the whole graph at full strength' : 'Dim everything but this workload and its direct peers'}
+          onClick={() => onFocusModeChange(!focusMode)}
+        >
+          <span className="workload-panel__focus-box" aria-hidden="true" />
+          Focus neighbors
         </button>
       </div>
       <div className="workload-panel__header">
