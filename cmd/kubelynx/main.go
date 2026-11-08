@@ -79,7 +79,15 @@ func main() {
 
 	slog.Info("kubelynx listening", "addr", *listenAddr, "prometheus", prom.RedactedURL(), "prometheus_auth", prom.AuthMode(),
 		"refresh_interval", *refreshInterval, "namespace_warn_threshold", *namespaceWarnThreshold, "ui_embedded", uiEmbedded)
-	if err := http.ListenAndServe(*listenAddr, mux); err != nil {
+	// ReadHeaderTimeout bounds slow-header (Slowloris) clients. No
+	// WriteTimeout: /api/topology waits on Prometheus, which can be slow.
+	srv := &http.Server{
+		Addr:              *listenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("server exited", "error", err)
 		os.Exit(1)
 	}
