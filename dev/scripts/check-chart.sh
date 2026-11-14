@@ -202,7 +202,8 @@ fi
 
 # Values the chart must reject at render time rather than crash-loop on.
 for bad in 'prometheus.url=' 'refreshInterval=abc' 'refreshInterval=30' \
-  'namespaceWarnThreshold=-1' 'namespaceWarnThreshold=abc' 'namespaceWarnThreshold=1.5'; do
+  'namespaceWarnThreshold=-1' 'namespaceWarnThreshold=abc' 'namespaceWarnThreshold=1.5' \
+  'flowSeriesBudget=-1' 'flowSeriesBudget=abc' 'flowSeriesBudget=1.5'; do
   if render --set "$bad" >/dev/null 2>&1; then
     fail "chart accepted --set $bad"
   fi
@@ -217,8 +218,14 @@ fi
 if ! render --set namespaceWarnThreshold=0 | grep -q -- '- --namespace-warn-threshold=0$'; then
   fail "namespaceWarnThreshold=0 (warning off) must render --namespace-warn-threshold=0"
 fi
+if ! grep -q -- '- --flow-series-budget=1000$' <<<"$MANIFESTS"; then
+  fail "default render must pass --flow-series-budget=1000"
+fi
+if ! render --set flowSeriesBudget=0 | grep -q -- '- --flow-series-budget=0$'; then
+  fail "flowSeriesBudget=0 (check off) must render --flow-series-budget=0"
+fi
 
 if [[ "$FAILED" == "true" ]]; then
   exit 1
 fi
-echo "PASS: chart renders one Deployment + one Service, no RBAC, and wires bearer/basic auth, the refresh interval and the namespace warn threshold correctly."
+echo "PASS: chart renders one Deployment + one Service, no RBAC, and wires bearer/basic auth, the refresh interval, the namespace warn threshold and the flow series budget correctly."

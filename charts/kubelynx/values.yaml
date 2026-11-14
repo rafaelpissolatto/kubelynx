@@ -41,6 +41,13 @@ refreshInterval: 15s
 # 0 turns the warning off. Selections are never capped.
 namespaceWarnThreshold: 6
 
+# Passed as --flow-series-budget: KubeLynx logs a warning when
+# beyla_network_flow_bytes_total holds more than this many series, a sign the
+# recommended Beyla cardinality profile isn't applied (docs/flow-cardinality.md).
+# Checked at startup and every 5 minutes; logged only when the count crosses
+# the budget. A whole number; 0 turns the check off.
+flowSeriesBudget: 1000
+
 # Port-cardinality and protocol-filter tuning. Both are optional; leave them
 # empty to keep the binary's built-in defaults. Each one is rendered into a
 # chart-managed ConfigMap (plain, non-secret data), mounted as a directory and
