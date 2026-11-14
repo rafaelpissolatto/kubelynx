@@ -1,0 +1,52 @@
+# Scrapes Istio's metrics into the dev cluster's Prometheus: istiod, the CNI
+# agent, ztunnel (L4: istio_tcp_sent/received_bytes_total) and waypoints
+# (L7: istio_requests_total). Those are the series KubeLynx's Istio source
+# reads (internal/topology/istio.go).
+#
+# Istio's pods say where their metrics are with prometheus.io/* annotations:
+# istiod on :15014/metrics; ztunnel and the CNI agent on :15020/metrics;
+# waypoints on :15020/stats/prometheus. Only Istio's namespace and the mesh
+# demo's are searched, where the only annotated pods are Istio's. Prometheus
+# picks up every PodMonitor (dev/prometheus/values.yaml), so no release label
+# is needed.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: istio
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [istio-system, mesh-frontend, mesh-backend]
+  selector: {}
+  podMetricsEndpoints:
+    - interval: 15s
+      # Waypoint metrics carry their own workload labels (source_workload,
+      # destination_workload, ...); keep them if they ever collide with ours.
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          regex: "true"
+          action: keep
+        - sourceLabels: [__meta_kubernetes_pod_phase]
+          regex: Running
+          action: keep
+        # Pod IP + the annotated port. A pod yields one target per container
+        # port; after this rewrite they're identical and scrape only once.
+        - sourceLabels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          separator: ":"
+          targetLabel: __address__
+        - sourceLabels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          regex: (.+)
+          targetLabel: __metrics_path__
+        # Component name from whichever label it has: app (istiod, ztunnel),
+        # k8s-app (istio-cni-node), or the Gateway class (istio-waypoint).
+        - sourceLabels:
+            - __meta_kubernetes_pod_label_app
+            - __meta_kubernetes_pod_label_k8s_app
+            - __meta_kubernetes_pod_label_gateway_networking_k8s_io_gateway_class_name
+          separator: ";"
+          regex: ";*([^;]+).*"
+          targetLabel: app
+        - sourceLabels: [app]
+          targetLabel: job
+          replacement: istio/$1

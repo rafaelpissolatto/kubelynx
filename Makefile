@@ -11,8 +11,23 @@ IMAGE_REPO ?= kubelynx
 IMAGE_TAG ?= dev
 IMAGE = $(IMAGE_REPO):$(IMAGE_TAG)
 KUBELYNX_NAMESPACE ?= kubelynx
+# Istio, ambient mode (base, istiod, cni, ztunnel charts). 1.31 supports
+# Kubernetes 1.32-1.37. Same versions as the OpenObserve lab cluster.
+ISTIO_VERSION ?= 1.31.4
+# Waypoints are Gateway API Gateways, so the CRDs must exist before Istio.
+GATEWAY_API_VERSION ?= v1.6.3
+
+# Downloads (Istio charts, Gateway API CRDs) are cached here, outside git, and
+# survive `make clean`. Istio's charts come from its docs' repo
+# (blob.istio.io redirects here); dev/scripts/fetch-chart.sh downloads them
+# with retries and checks them against the repo index's SHA-256.
+DEV_CACHE        = dev/.cache
+ISTIO_REPO       = https://istio-release.r2.istio.io/charts
+ISTIO_CHARTS     = $(foreach c,base istiod cni ztunnel,$(DEV_CACHE)/charts/$(c)-$(ISTIO_VERSION).tgz)
+GATEWAY_API_CRDS = $(DEV_CACHE)/gateway-api-$(GATEWAY_API_VERSION)-standard-install.yaml
 
 .PHONY: cluster deploy-prometheus deploy-beyla demo-traffic setup test \
+        deploy-gateway-api deploy-istio demo-mesh istio-charts \
         port-prometheus logs-beyla clean all \
         image kind-load deploy-kubelynx port-kubelynx lint-chart \
         scan scan-tools scan-suppressions scan-govulncheck scan-deps scan-gosec \
@@ -53,11 +68,56 @@ demo-traffic:
 	kubectl wait --for=condition=available deployment/backend -n demo-backend --timeout=120s
 	kubectl wait --for=condition=available deployment/frontend -n demo-frontend --timeout=120s
 
+# --- Istio, ambient mode (https://istio.io/latest/docs/ambient/install/helm/) ---
+# `make istio-charts` pre-downloads everything (e.g. before going offline).
+istio-charts: $(ISTIO_CHARTS) $(GATEWAY_API_CRDS)
+
+$(DEV_CACHE)/charts/%-$(ISTIO_VERSION).tgz:
+	CHART_DIR=$(DEV_CACHE)/charts ./dev/scripts/fetch-chart.sh $(ISTIO_REPO) $* $(ISTIO_VERSION)
+
+$(GATEWAY_API_CRDS):
+	@mkdir -p $(DEV_CACHE)
+	curl -sSfL --retry 6 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 300 \
+		-o $@.tmp https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API_VERSION)/standard-install.yaml
+	mv $@.tmp $@
+
+# Server-side: the CRDs exceed the 256KB annotation limit of client-side apply.
+deploy-gateway-api: $(GATEWAY_API_CRDS)
+	kubectl apply --server-side -f $(GATEWAY_API_CRDS)
+
+# Order as in Istio's docs: base (CRDs), istiod, CNI agent, ztunnel. Then the
+# PodMonitor that gets ztunnel's and the waypoints' metrics into Prometheus
+# (needs the Prometheus Operator CRDs from deploy-prometheus).
+deploy-istio: deploy-gateway-api $(ISTIO_CHARTS)
+	helm upgrade --install istio-base $(DEV_CACHE)/charts/base-$(ISTIO_VERSION).tgz \
+		--namespace istio-system --create-namespace --wait
+	helm upgrade --install istiod $(DEV_CACHE)/charts/istiod-$(ISTIO_VERSION).tgz \
+		--namespace istio-system --set profile=ambient \
+		--values dev/istio/istiod-values.yaml --wait --timeout 5m
+	helm upgrade --install istio-cni $(DEV_CACHE)/charts/cni-$(ISTIO_VERSION).tgz \
+		--namespace istio-system --set profile=ambient \
+		--values dev/istio/cni-values.yaml --wait --timeout 5m
+	helm upgrade --install ztunnel $(DEV_CACHE)/charts/ztunnel-$(ISTIO_VERSION).tgz \
+		--namespace istio-system \
+		--values dev/istio/ztunnel-values.yaml --wait --timeout 5m
+	kubectl apply -f dev/istio/podmonitor.yaml
+
+# The demo's Istio ambient copy: dev/beyla/40-demo-traffic.yaml rewritten by
+# dev/istio/mesh.sed (mesh-* namespaces enrolled in the mesh), plus the
+# waypoint in dev/istio/mesh.yaml.
+demo-mesh:
+	sed -f dev/istio/mesh.sed dev/beyla/40-demo-traffic.yaml | kubectl apply -f -
+	kubectl apply -f dev/istio/mesh.yaml
+	kubectl wait --for=condition=Programmed gateway/waypoint -n mesh-backend --timeout=300s
+	kubectl wait --for=condition=available deployment/backend -n mesh-backend --timeout=300s
+	kubectl wait --for=condition=available deployment/frontend -n mesh-frontend --timeout=300s
+
 # --- Full setup ---
-setup: cluster deploy-prometheus deploy-beyla demo-traffic
+setup: cluster deploy-prometheus deploy-beyla demo-traffic deploy-istio demo-mesh
 	@echo ""
 	@echo "Setup complete."
 	@echo "Prometheus: make port-prometheus"
+	@echo "Demo:       demo-* (plain, Beyla only), mesh-* (Istio ambient + waypoint)"
 	@echo "Validate:   make test"
 
 # --- KubeLynx (single image + Helm chart) ---

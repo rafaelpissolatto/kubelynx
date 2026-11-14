@@ -1,0 +1,8 @@
+# istio/ztunnel Helm values. ztunnel is ambient mode's per-node L4 proxy:
+# mTLS (HBONE) between meshed pods and the L4 metrics KubeLynx reads
+# (istio_tcp_sent/received_bytes_total). The chart's 200m/512Mi request is
+# sized for very large clusters.
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi

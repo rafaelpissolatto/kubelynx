@@ -1,0 +1,11 @@
+# istio/istiod Helm values (Istio ambient mode; `make deploy-istio` adds
+# --set profile=ambient, as in https://istio.io/latest/docs/ambient/install/helm/).
+pilot:
+  # The chart defaults (500m CPU, 2Gi memory, HPA up to 5 replicas) are sized
+  # for real clusters; one small istiod is plenty for a kind dev cluster.
+  autoscaleEnabled: false
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
