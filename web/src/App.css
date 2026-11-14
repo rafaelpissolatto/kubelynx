@@ -781,6 +781,28 @@ body,
   overflow-x: hidden;
 }
 
+/* Phone-width layout (#97). App.tsx sets data-layout="stacked" below
+   STACKED_LAYOUT_MAX_WIDTH (lib/resizablePanel.ts), the one place the
+   breakpoint is defined. The canvas gets the full width and most of the
+   height; the flows panel sits below it at full width and scrolls on its
+   own, so the canvas stays in view while a flow is picked from the table. */
+.app__body[data-layout='stacked'] {
+  flex-direction: column;
+}
+
+.app__body[data-layout='stacked'] .app__canvas {
+  flex: 3 1 0;
+  min-height: 240px;
+}
+
+.app__body[data-layout='stacked'] .app__flows-panel {
+  flex: 2 1 0;
+  min-height: 0;
+  width: 100%;
+  border-left: none;
+  border-top: 1px solid var(--border);
+}
+
 .app__status {
   position: absolute;
   inset: 0;

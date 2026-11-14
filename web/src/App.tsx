@@ -53,6 +53,7 @@ import { SecurityLegend } from './components/SecurityLegend'
 import { graphHasSecurity } from './lib/flowSecurity'
 import {
   clampFlowsPanelWidth,
+  isStackedLayout,
   loadFlowsPanelWidth,
   saveFlowsPanelWidth,
   MIN_FLOWS_PANEL_WIDTH,
@@ -92,6 +93,10 @@ const DEFAULT_ACCENT = '#b79cff'
 // Zoom a search jump settles at (issue #77) when the view is further out
 // than this; a closer view is kept as-is and only panned.
 const SEARCH_JUMP_MIN_ZOOM = 1
+// React Flow's default minZoom (0.5) stops fitView short on a phone-width
+// canvas, leaving most workloads off-screen (#97). The stacked layout lets it
+// zoom out far enough to fit; side by side keeps the default.
+const STACKED_MIN_ZOOM = 0.1
 const SEARCH_JUMP_DURATION_MS = 300
 // Viewport animation for keyboard pan/zoom (0 under reduced motion).
 const CANVAS_KEY_DURATION_MS = 120
@@ -264,9 +269,13 @@ function App() {
     refreshIntervalOverrideMs ?? DEFAULT_REFRESH_INTERVAL_MS,
   )
   const [paused, setPaused] = useState(false)
-  const [flowsPanelWidth, setFlowsPanelWidth] = useState(() =>
-    loadFlowsPanelWidth(window.innerWidth),
-  )
+  // The user's preferred panel width, not clamped to the window: it is
+  // clamped at render time (flowsPanelWidth below), so shrinking the window
+  // or switching to the stacked phone layout and back keeps the saved width.
+  const [preferredFlowsPanelWidth, setPreferredFlowsPanelWidth] = useState(loadFlowsPanelWidth)
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth)
+  const stackedLayout = isStackedLayout(viewportWidth)
+  const flowsPanelWidth = clampFlowsPanelWidth(preferredFlowsPanelWidth, viewportWidth)
   const [theme, setTheme] = useState<Theme>(loadTheme)
   // Only consulted when theme === 'system' (see resolveTheme) — tracked as
   // state, rather than read once, so an OS-level light/dark switch updates
@@ -300,6 +309,12 @@ function App() {
     const onChange = (event: MediaQueryListEvent) => setSystemPrefersDark(event.matches)
     media.addEventListener('change', onChange)
     return () => media.removeEventListener('change', onChange)
+  }, [])
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
   }, [])
 
   useEffect(() => {
@@ -684,7 +699,7 @@ function App() {
 
     function onMouseMove(moveEvent: MouseEvent) {
       latestWidth = clampFlowsPanelWidth(startWidth + (startX - moveEvent.clientX), window.innerWidth)
-      setFlowsPanelWidth(latestWidth)
+      setPreferredFlowsPanelWidth(latestWidth)
     }
 
     function onMouseUp() {
@@ -708,7 +723,7 @@ function App() {
 
     event.preventDefault()
     const width = clampFlowsPanelWidth(flowsPanelWidth + delta, window.innerWidth)
-    setFlowsPanelWidth(width)
+    setPreferredFlowsPanelWidth(width)
     saveFlowsPanelWidth(width)
   }
 
@@ -888,7 +903,9 @@ function App() {
           />
         </div>
       </header>
-      <div className="app__body">
+      {/* Stacked below STACKED_LAYOUT_MAX_WIDTH (#97): canvas on top at full
+          width, flows panel below it; App.css keys off data-layout. */}
+      <div className="app__body" data-layout={stackedLayout ? 'stacked' : 'side-by-side'}>
         <main
           ref={canvasRef}
           className="app__canvas"
@@ -938,6 +955,7 @@ function App() {
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 fitView
+                minZoom={stackedLayout ? STACKED_MIN_ZOOM : undefined}
                 proOptions={{ hideAttribution: true }}
                 selectNodesOnDrag={false}
                 onNodesChange={handleNodesChange}
@@ -966,19 +984,24 @@ function App() {
             </EdgeDisplayContext.Provider>
           )}
         </main>
-        <div
-          className="app__flows-resize-handle"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize flows panel"
-          aria-valuenow={flowsPanelWidth}
-          aria-valuemin={MIN_FLOWS_PANEL_WIDTH}
-          aria-valuemax={MAX_FLOWS_PANEL_WIDTH}
-          tabIndex={0}
-          onMouseDown={handleResizeStart}
-          onKeyDown={handleResizeKeyDown}
-        />
-        <aside className="app__flows-panel" style={{ width: flowsPanelWidth }}>
+        {!stackedLayout && (
+          <div
+            className="app__flows-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize flows panel"
+            aria-valuenow={flowsPanelWidth}
+            aria-valuemin={MIN_FLOWS_PANEL_WIDTH}
+            aria-valuemax={MAX_FLOWS_PANEL_WIDTH}
+            tabIndex={0}
+            onMouseDown={handleResizeStart}
+            onKeyDown={handleResizeKeyDown}
+          />
+        )}
+        <aside
+          className="app__flows-panel"
+          style={stackedLayout ? undefined : { width: flowsPanelWidth }}
+        >
           {selectedWorkloadId ? (
             <WorkloadPanel
               workloadId={selectedWorkloadId}
