@@ -20,6 +20,10 @@
 {{- if not (regexMatch "^[0-9]+$" $namespaceWarnThreshold) }}
 {{- fail (printf "namespaceWarnThreshold must be a whole number (0 turns the warning off), got %q" $namespaceWarnThreshold) }}
 {{- end }}
+{{- $flowSeriesBudget := toString .Values.flowSeriesBudget }}
+{{- if not (regexMatch "^[0-9]+$" $flowSeriesBudget) }}
+{{- fail (printf "flowSeriesBudget must be a whole number (0 turns the check off), got %q" $flowSeriesBudget) }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -70,6 +74,7 @@ spec:
             - --prometheus-url={{ required "prometheus.url is required" .Values.prometheus.url }}
             - --refresh-interval={{ $refreshInterval }}
             - --namespace-warn-threshold={{ $namespaceWarnThreshold }}
+            - --flow-series-budget={{ $flowSeriesBudget }}
             {{- if $tokenSecret.name }}
             - --prometheus-bearer-token-file=/var/run/secrets/kubelynx/prometheus/token
             {{- end }}

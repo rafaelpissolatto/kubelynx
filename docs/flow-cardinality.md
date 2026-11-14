@@ -83,6 +83,8 @@ count by (direction) (beyla_network_flow_bytes_total)
 
 For reference, the lab cluster that ADR 0003 used to re-check the profile (more workloads than the dev cluster, plus an Istio ambient mesh) holds 133 series across 24 distinct `dst_port` values, with only 2 series having `direction="response"`. If your count keeps climbing while the set of workloads stays the same, the filter isn't being applied, or ephemeral ports are leaking through (next section).
 
+KubeLynx runs the first of these queries itself at startup and every 5 minutes, and logs a `flow series over budget` warning when the count exceeds `-flow-series-budget` (Helm value `flowSeriesBudget`, default 1000; `0` turns it off).
+
 ## The ephemeral-range assumption
 
 The pattern assumes clients pick source ports from Linux's default `net.ipv4.ip_local_port_range`, `32768 60999`. Check a node with:

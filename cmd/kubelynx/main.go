@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,10 @@ import (
 	"github.com/rafaelpissolatto/kubelynx/web"
 )
 
+// flowSeriesCheckInterval is how often the -flow-series-budget checker
+// counts Beyla flow series; series counts change over hours, not seconds.
+const flowSeriesCheckInterval = 5 * time.Minute
+
 func main() {
 	var (
 		listenAddr                = flag.String("listen-addr", ":8080", "address to serve the KubeLynx API on")
@@ -26,6 +31,7 @@ func main() {
 		tcpPortAllowlistFile      = flag.String("tcp-port-allowlist-file", "", `path to a JSON file overriding the default TCP "known ports" allow-list used to bound port cardinality, e.g. {"tcp":["80","443","8080"]}; TCP ports outside this list (and UDP ports other than 53/DNS) are aggregated into a single "multiple" flow instead of one per port; omit to use the built-in defaults`)
 		refreshInterval           = flag.Duration("refresh-interval", 15*time.Second, "how often the UI polls /api/topology; served to the frontend via /api/config (a ?refreshInterval=<ms> URL param still overrides it)")
 		namespaceWarnThreshold    = flag.Int("namespace-warn-threshold", 6, "how many namespaces from different prefix groups (the part before the first \"-\"), or \"All namespaces\" on a cluster with at least this many, the UI's namespace picker accepts before showing a non-blocking \"may render slowly\" warning; served to the frontend via /api/config; 0 disables the warning")
+		flowSeriesBudget          = flag.Int("flow-series-budget", 1000, "log a warning when beyla_network_flow_bytes_total holds more than this many series, the sign that the recommended Beyla cardinality profile isn't applied (see docs/flow-cardinality.md); checked at startup and every 5m, logged only when the count crosses the budget; 0 disables the check")
 	)
 	flag.Parse()
 
@@ -37,6 +43,10 @@ func main() {
 	}
 	if *namespaceWarnThreshold < 0 {
 		slog.Error("invalid namespace warn threshold; must be 0 (off) or positive", "namespace_warn_threshold", *namespaceWarnThreshold)
+		os.Exit(1)
+	}
+	if *flowSeriesBudget < 0 {
+		slog.Error("invalid flow series budget; must be 0 (off) or positive", "flow_series_budget", *flowSeriesBudget)
 		os.Exit(1)
 	}
 
@@ -63,6 +73,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Runs independently of HTTP traffic so the warning reaches pod logs
+	// whether or not anyone has the UI open (#64).
+	if *flowSeriesBudget > 0 {
+		budget := &topology.FlowSeriesBudget{API: prom, Budget: *flowSeriesBudget, Logger: slog.Default()}
+		go budget.Run(context.Background(), flowSeriesCheckInterval)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/topology", api.TopologyHandler(prom, protocolClasses, portCardinality))
 	mux.HandleFunc("/api/namespaces", api.NamespacesHandler(prom))
@@ -78,7 +95,7 @@ func main() {
 	mux.Handle("/", api.UIHandler(assets, uiEmbedded))
 
 	slog.Info("kubelynx listening", "addr", *listenAddr, "prometheus", prom.RedactedURL(), "prometheus_auth", prom.AuthMode(),
-		"refresh_interval", *refreshInterval, "namespace_warn_threshold", *namespaceWarnThreshold, "ui_embedded", uiEmbedded)
+		"refresh_interval", *refreshInterval, "namespace_warn_threshold", *namespaceWarnThreshold, "flow_series_budget", *flowSeriesBudget, "ui_embedded", uiEmbedded)
 	// ReadHeaderTimeout bounds slow-header (Slowloris) clients. No
 	// WriteTimeout: /api/topology waits on Prometheus, which can be slow.
 	srv := &http.Server{
