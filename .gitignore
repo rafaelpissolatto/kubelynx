@@ -3,3 +3,4 @@
 /.playwright-mcp/
 /.bin/
 /scan-reports/
+/dev/.cache/

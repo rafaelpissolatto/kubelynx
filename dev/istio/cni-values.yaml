@@ -1,0 +1,7 @@
+# istio/cni Helm values (ambient profile set by `make deploy-istio`). The CNI
+# node agent sets up traffic redirection from meshed pods to ztunnel; kind's
+# default CNI paths (/opt/cni/bin, /etc/cni/net.d) are the chart's defaults.
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi

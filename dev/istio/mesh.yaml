@@ -1,0 +1,26 @@
+# Waypoint for the demo's Istio ambient copy (`make demo-mesh`; the apps
+# themselves are generated from dev/beyla/40-demo-traffic.yaml by
+# dev/istio/mesh.sed):
+#
+#   frontend ══HBONE══► waypoint ══HBONE══► backend
+#   mesh-frontend       mesh-backend        mesh-backend
+#   ztunnel ..................................ztunnel
+#
+# ══ is ztunnel's mTLS tunnel. The waypoint is an Envoy proxy (deployed by
+# istiod from this Gateway) that handles L7 for traffic to mesh-backend's
+# services and reports istio_requests_total for it (request_protocol="http",
+# connection_security_policy="mutual_tls"). The namespace opts in with the
+# istio.io/use-waypoint label (set by dev/istio/mesh.sed).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: mesh-backend
+  labels:
+    istio.io/waypoint-for: service
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+    - name: mesh
+      port: 15008
+      protocol: HBONE

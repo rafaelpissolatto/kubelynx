@@ -76,3 +76,33 @@ if [[ "$FULLY_LABELED" == "null" ]]; then
 fi
 
 echo "PASS: found a fully-labeled beyla_network_flow_bytes_total series: $FULLY_LABELED"
+
+# The demo's Istio ambient copy (dev/istio/): KubeLynx's Istio source
+# (internal/topology/istio.go) reads istio_requests_total from the waypoint
+# and istio_tcp_sent/received_bytes_total from ztunnel, keyed by the
+# source/destination workload labels, with connection_security_policy for the
+# per-edge mTLS status. Polls like the Beyla check: the waypoint and ztunnel
+# need a scrape or two after `make setup` before their series show up.
+prom_wait() {
+  local name="$1" query="$2" result count
+  echo "Waiting for $name..."
+  for _ in $(seq 1 36); do
+    result=$(curl -s "http://localhost:$LOCAL_PORT/api/v1/query" --data-urlencode "query=$query")
+    count=$(echo "$result" | jq '.data.result | length')
+    if [[ "$count" -gt 0 ]]; then
+      echo "PASS: $name: $(echo "$result" | jq -c '.data.result[0].metric')"
+      return 0
+    fi
+    sleep 5
+  done
+  echo "FAIL: no series for $name after 3 minutes."
+  echo "  query: $query"
+  exit 1
+}
+
+prom_wait "Istio waypoint requests, mesh frontend -> backend over mTLS" \
+  'sum by (source_workload, source_workload_namespace, destination_workload, destination_workload_namespace, request_protocol, connection_security_policy) (istio_requests_total{source_workload_namespace="mesh-frontend", destination_workload_namespace="mesh-backend", connection_security_policy="mutual_tls"})'
+prom_wait "ztunnel L4 bytes for the mesh demo" \
+  'sum by (source_workload, destination_workload, destination_workload_namespace, request_protocol, connection_security_policy) (istio_tcp_sent_bytes_total{job="istio/ztunnel", destination_workload_namespace="mesh-backend"})'
+
+echo "PASS: Beyla and Istio telemetry for the demo workloads (plain and Istio ambient) are in Prometheus."

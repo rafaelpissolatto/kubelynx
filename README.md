@@ -48,11 +48,13 @@ You run Beyla yourself. To keep its flow metrics from growing a new Prometheus s
 
 Requirements: Go 1.26, Node.js with npm, Docker, [kind](https://kind.sigs.k8s.io/), kubectl and Helm.
 
-1. Spin up the dev cluster (kind, Prometheus, Beyla and demo traffic):
+1. Spin up the dev cluster (kind, Prometheus, Beyla, Istio in ambient mode and demo traffic):
 
    ```sh
    make setup
    ```
+
+   The demo runs twice. `demo-frontend` → `demo-backend` is outside the mesh, so only Beyla sees it. `mesh-frontend` → `mesh-backend` is the same pair enrolled in the Istio ambient mesh: ztunnel carries it over mTLS, and a waypoint in `mesh-backend` adds L7 metrics. Both sources (`beyla` and `istio`) therefore have traffic to show, including the per-edge mTLS status. The Istio pieces live in `dev/istio/`. Charts and Gateway API CRDs are downloaded once into `dev/.cache/`.
 
 2. Port-forward Prometheus to `localhost:9090`:
 
@@ -76,7 +78,10 @@ Other make targets:
 
 | Target | What it does |
 | --- | --- |
-| `make test` | Checks that Beyla flow metrics are reaching Prometheus |
+| `make test` | Checks that Beyla flow metrics and Istio's waypoint and ztunnel metrics (with mTLS) are reaching Prometheus |
+| `make deploy-istio` | Installs the Gateway API CRDs, Istio ambient (istiod, CNI, ztunnel) and the PodMonitor that scrapes it |
+| `make demo-mesh` | Deploys the meshed copy of the demo (`mesh-*` namespaces) and its waypoint |
+| `make istio-charts` | Pre-downloads the Istio charts and Gateway API CRDs into `dev/.cache/` |
 | `make image` | Builds the `kubelynx:dev` container image |
 | `make deploy-kubelynx` | Builds the image, loads it into kind and installs the Helm chart into the `kubelynx` namespace |
 | `make port-kubelynx` | Port-forwards the in-cluster KubeLynx to `localhost:8080` |
@@ -105,7 +110,7 @@ echo -n "$TOKEN" > /tmp/prom-token
 go run ./cmd/kubelynx -prometheus-url https://prom.example -prometheus-bearer-token-file /tmp/prom-token
 ```
 
-For a backend that uses HTTP Basic auth, such as the OpenObserve in the Istio lab cluster (`kubectl -n monitoring port-forward svc/openobserve 5080:5080`), pass a username and a password file rather than embedding credentials in the URL:
+For a backend that uses HTTP Basic auth, such as the OpenObserve in the separate OpenObserve lab cluster (`kubectl -n monitoring port-forward svc/openobserve 5080:5080`), pass a username and a password file rather than embedding credentials in the URL:
 
 ```sh
 kubectl -n monitoring get secret openobserve-credentials -o jsonpath='{.data.password}' | base64 -d > /tmp/prom-password
