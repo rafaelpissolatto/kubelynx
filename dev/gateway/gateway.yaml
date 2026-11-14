@@ -1,0 +1,116 @@
+# One Gateway, reached through kind's host port mappings:
+#   - https (443): TLS terminated with the localhost-tls cert
+#     (dev/scripts/gen-certs.sh, created as a Secret by `make deploy-gateway`)
+#   - http  (80):  only redirects to https
+# and a route per app, attached to the https listener. *.localhost resolves
+# to 127.0.0.1 in browsers and curl, so no /etc/hosts edits are needed.
+# KubeLynx's own route is in kubelynx-route.yaml, applied by
+# `make deploy-kubelynx`. `make deploy-gateway` fills in @HTTPS_PORT@.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: gateway
+  namespace: nginx-gateway
+spec:
+  gatewayClassName: nginx
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: "*.localhost"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: localhost-tls
+      allowedRoutes:
+        namespaces:
+          from: All
+    # Only routes from nginx-gateway (just the redirect below), so nothing
+    # can be served over plain HTTP by accident.
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: "*.localhost"
+      allowedRoutes:
+        namespaces:
+          from: Same
+
+---
+# Everything on plain HTTP goes to the same URL over HTTPS, on the host's
+# HTTPS port. 302 rather than 301 so browsers don't cache the redirect if
+# this setup changes.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: nginx-gateway
+spec:
+  parentRefs:
+    - name: gateway
+      sectionName: http
+  hostnames: ["*.localhost"]
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            port: @HTTPS_PORT@
+            statusCode: 302
+
+---
+# Prometheus UI, the data KubeLynx reads (no auth in this dev cluster).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  parentRefs:
+    - name: gateway
+      namespace: nginx-gateway
+      sectionName: https
+  hostnames: ["prometheus.localhost"]
+  rules:
+    - backendRefs:
+        - name: prometheus-kube-prometheus-prometheus
+          port: 9090
+
+---
+# The plain demo's backend (nginx). Browser requests add a
+# gateway -> demo-backend edge next to the frontend's curl loop.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: backend
+  namespace: demo-backend
+spec:
+  parentRefs:
+    - name: gateway
+      namespace: nginx-gateway
+      sectionName: https
+  hostnames: ["demo.localhost"]
+  rules:
+    - backendRefs:
+        - name: backend
+          port: 80
+
+---
+# The meshed demo's backend. The gateway isn't in the mesh, so this hop
+# reaches ztunnel in plain text (ambient accepts it, PERMISSIVE by default)
+# and shows up in the Istio source as an edge into the mesh.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: backend
+  namespace: mesh-backend
+spec:
+  parentRefs:
+    - name: gateway
+      namespace: nginx-gateway
+      sectionName: https
+  hostnames: ["mesh.localhost"]
+  rules:
+    - backendRefs:
+        - name: backend
+          port: 80

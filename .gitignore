@@ -4,3 +4,4 @@
 /.bin/
 /scan-reports/
 /dev/.cache/
+/dev/gateway/certs/

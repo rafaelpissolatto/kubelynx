@@ -106,3 +106,39 @@ prom_wait "ztunnel L4 bytes for the mesh demo" \
   'sum by (source_workload, destination_workload, destination_workload_namespace, request_protocol, connection_security_policy) (istio_tcp_sent_bytes_total{job="istio/ztunnel", destination_workload_namespace="mesh-backend"})'
 
 echo "PASS: Beyla and Istio telemetry for the demo workloads (plain and Istio ambient) are in Prometheus."
+
+# The HTTPS gateway (dev/gateway/): each route answers over TLS with a cert
+# that verifies against the local CA (no -k), and plain HTTP redirects.
+# *.localhost resolves to 127.0.0.1 in curl, as in browsers.
+CA_CERT="${CA_CERT:-dev/gateway/certs/ca.crt}"
+HTTP_PORT="${GATEWAY_HTTP_PORT:-80}"
+HTTPS_PORT="${GATEWAY_HTTPS_PORT:-443}"
+KUBELYNX_NAMESPACE="${KUBELYNX_NAMESPACE:-kubelynx}"
+
+gw_check() {
+  local name="$1" url="$2" want="$3" code
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --cacert "$CA_CERT" "$url" || true)
+  if [[ "$code" != "$want" ]]; then
+    echo "FAIL: gateway $name: $url returned ${code:-no response}, want $want."
+    exit 1
+  fi
+  echo "PASS: gateway $name: $url -> $code"
+}
+
+gw_check "Prometheus" "https://prometheus.localhost:$HTTPS_PORT/-/ready" 200
+gw_check "plain demo backend" "https://demo.localhost:$HTTPS_PORT/" 200
+gw_check "mesh demo backend" "https://mesh.localhost:$HTTPS_PORT/" 200
+gw_check "HTTP -> HTTPS redirect" "http://prometheus.localhost:$HTTP_PORT/-/ready" 302
+LOCATION=$(curl -s -o /dev/null -w '%{redirect_url}' --max-time 10 "http://prometheus.localhost:$HTTP_PORT/-/ready")
+if [[ "$LOCATION" != https://prometheus.localhost* ]]; then
+  echo "FAIL: HTTP redirect points at '$LOCATION', want https://prometheus.localhost..."
+  exit 1
+fi
+# Only once `make deploy-kubelynx` has installed KubeLynx and its route.
+if kubectl get httproute/kubelynx -n "$KUBELYNX_NAMESPACE" >/dev/null 2>&1; then
+  gw_check "KubeLynx" "https://kubelynx.localhost:$HTTPS_PORT/healthz" 200
+else
+  echo "SKIP: gateway KubeLynx (run make deploy-kubelynx for https://kubelynx.localhost)."
+fi
+
+echo "PASS: the HTTPS gateway serves the dev apps with a certificate from the local CA."

@@ -56,7 +56,7 @@ Requirements: Go 1.26, Node.js with npm, Docker, [kind](https://kind.sigs.k8s.io
 
    The demo runs twice. `demo-frontend` → `demo-backend` is outside the mesh, so only Beyla sees it. `mesh-frontend` → `mesh-backend` is the same pair enrolled in the Istio ambient mesh: ztunnel carries it over mTLS, and a waypoint in `mesh-backend` adds L7 metrics. Both sources (`beyla` and `istio`) therefore have traffic to show, including the per-edge mTLS status. The Istio pieces live in `dev/istio/`. Charts and Gateway API CRDs are downloaded once into `dev/.cache/`.
 
-2. Port-forward Prometheus to `localhost:9090`:
+2. Point the backend at Prometheus, either through the HTTPS gateway (see [Local HTTPS](#local-https)) or with a port-forward to `localhost:9090`:
 
    ```sh
    make port-prometheus
@@ -66,6 +66,8 @@ Requirements: Go 1.26, Node.js with npm, Docker, [kind](https://kind.sigs.k8s.io
 
    ```sh
    go run ./cmd/kubelynx -prometheus-url http://localhost:9090
+   # or, without the port-forward, once `make trust-ca-wsl` has run:
+   go run ./cmd/kubelynx -prometheus-url https://prometheus.localhost
    ```
 
 4. Run the frontend (proxies `/api` to the backend on `:8080`):
@@ -78,7 +80,11 @@ Other make targets:
 
 | Target | What it does |
 | --- | --- |
-| `make test` | Checks that Beyla flow metrics and Istio's waypoint and ztunnel metrics (with mTLS) are reaching Prometheus |
+| `make test` | Checks that Beyla flow metrics and Istio's waypoint and ztunnel metrics (with mTLS) are reaching Prometheus, and that the HTTPS gateway serves every route with a cert from the local CA |
+| `make deploy-gateway` | Installs NGINX Gateway Fabric, the `*.localhost` Gateway (HTTPS + HTTP redirect) and the routes |
+| `make certs` | Creates the local CA and the `*.localhost` server cert in `dev/gateway/certs/` (kept if already there) |
+| `make trust-ca-windows` | Trusts the local CA in your Windows user's root store (Edge, Chrome, Firefox on Windows) |
+| `make trust-ca-wsl` | Trusts the local CA in WSL's system store (curl, Go, …) and, if `certutil` is installed, in Linux Chrome's NSS store. Asks for sudo |
 | `make deploy-istio` | Installs the Gateway API CRDs, Istio ambient (istiod, CNI, ztunnel) and the PodMonitor that scrapes it |
 | `make demo-mesh` | Deploys the meshed copy of the demo (`mesh-*` namespaces) and its waypoint |
 | `make istio-charts` | Pre-downloads the Istio charts and Gateway API CRDs into `dev/.cache/` |
@@ -88,6 +94,31 @@ Other make targets:
 | `make lint-chart` | Runs `helm lint` on the chart |
 | `make logs-beyla` | Tails the Beyla logs |
 | `make clean` | Deletes the kind cluster |
+
+### Local HTTPS
+
+`make setup` also installs [NGINX Gateway Fabric](https://docs.nginx.com/nginx-gateway-fabric/) 2.8.0, so the lab's apps are reachable from the browser over HTTPS with no port-forward. Plain `http://` redirects to `https://`.
+
+| URL | What |
+| --- | --- |
+| https://kubelynx.localhost | The in-cluster KubeLynx, once `make deploy-kubelynx` has run |
+| https://prometheus.localhost | Prometheus |
+| https://demo.localhost | The plain demo backend (only Beyla sees it) |
+| https://mesh.localhost | The meshed demo backend (also an edge into the mesh for the Istio source) |
+
+`*.localhost` resolves to 127.0.0.1, so there's nothing to add to `/etc/hosts`. kind maps host ports 80 and 443 to the gateway's NodePorts (30080/30443). On WSL, Windows reaches them through WSL's localhost forwarding.
+
+The certificate comes from a local CA that `make certs` creates in `dev/gateway/certs/`. That folder is gitignored and kept across `make clean`, so you only trust the CA once:
+
+```sh
+make trust-ca-windows   # Windows browsers (shows a confirmation dialog)
+make trust-ca-wsl       # WSL: curl, Go, Python; Linux Chrome too if certutil (libnss3-tools) is installed
+```
+
+Two options cover other setups:
+
+- **Reuse a CA you already trust**, such as the OpenObserve lab's: `make certs CA_DIR=~/local/k8s/openobserve/gateway/certs` before `make setup`. That CA is only read; the server cert is still written to `dev/gateway/certs/`.
+- **Run next to another lab that already holds ports 80/443**: `make clean setup GATEWAY_HTTP_PORT=8080 GATEWAY_HTTPS_PORT=8443`, then use `https://kubelynx.localhost:8443`. Pass the same ports to `make test`. kind only applies port mappings when it creates the cluster, which is why `clean` is needed.
 
 ### Backend flags
 
