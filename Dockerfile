@@ -10,7 +10,7 @@ COPY web/ ./
 RUN npm run build
 
 # --- Backend, with the frontend embedded (-tags embedui, see web/embed_none.go) ---
-FROM golang:1.26.10-alpine AS build
+FROM golang:1.26.11-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
