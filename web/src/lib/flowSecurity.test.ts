@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Flow } from './topology'
 import {
   edgeSecurityVariant,
-  graphHasSecurity,
+  legendStyles,
   mtlsDescription,
   mtlsPercent,
   mtlsStatusText,
@@ -79,14 +79,23 @@ describe('edgeSecurityVariant', () => {
     expect(edgeSecurityVariant(mtls, true)).toBe('mtls')
     expect(edgeSecurityVariant(plaintext, true)).toBe('plaintext')
     expect(edgeSecurityVariant(mixed, true)).toBe('mixed')
-    expect(edgeSecurityVariant(unknown, true)).toBeNull()
+    expect(edgeSecurityVariant(unknown, true)).toBe('unknown')
   })
 
   it('drops the plaintext/mixed highlight when off but keeps the mTLS lock', () => {
     expect(edgeSecurityVariant(mtls, false)).toBe('mtls')
     expect(edgeSecurityVariant(plaintext, false)).toBeNull()
     expect(edgeSecurityVariant(mixed, false)).toBeNull()
-    expect(edgeSecurityVariant(unknown, false)).toBeNull()
+  })
+
+  it('always styles an unknown edge, so it never passes for mTLS (#105)', () => {
+    expect(edgeSecurityVariant(unknown, true)).toBe('unknown')
+    expect(edgeSecurityVariant(unknown, false)).toBe('unknown')
+  })
+
+  it('treats a status this UI does not know as unknown', () => {
+    const future = { ...base, security: 'something_new' } as unknown as Flow
+    expect(edgeSecurityVariant(future, true)).toBe('unknown')
   })
 
   it('never styles a Beyla edge, or an edge without a flow', () => {
@@ -96,20 +105,24 @@ describe('edgeSecurityVariant', () => {
 
   it('gives table/detail glyphs regardless of the display toggle', () => {
     expect(securityGlyphVariant(plaintext)).toBe('plaintext')
-    expect(securityGlyphVariant(unknown)).toBeNull()
+    expect(securityGlyphVariant(unknown)).toBe('unknown')
     expect(securityGlyphVariant(beyla)).toBeNull()
   })
 })
 
-describe('graphHasSecurity', () => {
-  it('is false for an empty or all-Beyla graph', () => {
-    expect(graphHasSecurity([])).toBe(false)
-    expect(graphHasSecurity([beyla, beyla])).toBe(false)
+describe('legendStyles', () => {
+  it('lists only the styles on the canvas, in a fixed order', () => {
+    expect(legendStyles([unknown, mtls, mtls], true)).toEqual(['mtls', 'unknown'])
+    expect(legendStyles([mixed, plaintext, mtls, unknown], true)).toEqual(['mtls', 'plaintext', 'mixed', 'unknown'])
   })
 
-  it('is true once any flow carries a security value, unknown included', () => {
-    expect(graphHasSecurity([beyla, unknown])).toBe(true)
-    expect(graphHasSecurity([mtls])).toBe(true)
+  it('folds plaintext/mixed into one plain row while the highlight is off', () => {
+    expect(legendStyles([mtls, plaintext, mixed, unknown], false)).toEqual(['mtls', 'unknown', 'plain'])
+  })
+
+  it('has no rows for Beyla flows or missing flows', () => {
+    expect(legendStyles([beyla, undefined], true)).toEqual([])
+    expect(legendStyles([], true)).toEqual([])
   })
 })
 

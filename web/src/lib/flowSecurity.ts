@@ -15,12 +15,6 @@ export function sourceReportsSecurity(source: SourceFilter): boolean {
   return source === ISTIO_SOURCE
 }
 
-// Whether any flow carries a security value — gates the canvas legend, so a
-// Beyla graph (no flow has the field) shows none.
-export function graphHasSecurity(flows: readonly Flow[]): boolean {
-  return flows.some((flow) => flow.security !== undefined)
-}
-
 // mtlsRatio as a whole percentage, clamped to 0..100. null when absent or
 // not a finite number.
 export function mtlsPercent(ratio: number | undefined): number | null {
@@ -72,9 +66,12 @@ export function mtlsDescription(flow: Flow): string | null {
 // - 'mtls': closed-lock badge; the line itself is unchanged.
 // - 'plaintext': open-lock badge, dashed line, warning tint.
 // - 'mixed': half-lock badge, dash-dot line, amber tint.
-// null means "draw the edge as usual": Beyla (no security), 'unknown', and
-// plaintext/mixed while Display ▾ → Highlight plaintext edges is off.
-export type EdgeSecurityVariant = 'mtls' | 'plaintext' | 'mixed'
+// - 'unknown': outline-lock badge, dotted line, muted tint (#105) — Istio
+//   reported the flow but not whether it was mTLS, so it must not look like
+//   an mTLS edge (whose line is unchanged).
+// null means "draw the edge as usual": Beyla (no security), and plaintext/
+// mixed while Display ▾ → Highlight plaintext edges is off.
+export type EdgeSecurityVariant = 'mtls' | 'plaintext' | 'mixed' | 'unknown'
 
 // The Display toggle governs only the plaintext/mixed *highlight*; the mTLS
 // lock stays when it's off, since it marks the expected state rather than
@@ -88,13 +85,37 @@ export function edgeSecurityVariant(flow: Flow | undefined, highlightPlaintext: 
       return highlightPlaintext ? 'plaintext' : null
     case 'mixed':
       return highlightPlaintext ? 'mixed' : null
-    default:
+    case undefined:
       return null
+    // 'unknown', or any value a newer backend sends that this UI doesn't
+    // know. Shown whatever the toggle says: it isn't a warning to quiet,
+    // but without it the edge would pass for mTLS (#105).
+    default:
+      return 'unknown'
   }
 }
 
+// One row of the canvas legend: an edge variant, or 'plain' for Istio
+// flows drawn without security styling — plaintext/mixed while Display ▾ →
+// Highlight plaintext edges is off.
+export type LegendStyle = EdgeSecurityVariant | 'plain'
+
+const LEGEND_ORDER: readonly LegendStyle[] = ['mtls', 'plaintext', 'mixed', 'unknown', 'plain']
+
+// The legend rows for the edges actually on the canvas, in a fixed order,
+// so every drawn edge style has exactly one row and the legend lists nothing
+// the canvas doesn't show (#105). Beyla flows (no security) add no row.
+export function legendStyles(flows: readonly (Flow | undefined)[], highlightPlaintext: boolean): LegendStyle[] {
+  const present = new Set<LegendStyle>()
+  for (const flow of flows) {
+    if (flow?.security === undefined) continue
+    present.add(edgeSecurityVariant(flow, highlightPlaintext) ?? 'plain')
+  }
+  return LEGEND_ORDER.filter((style) => present.has(style))
+}
+
 // The glyph a flows-table cell or the flow detail shows next to its text
-// (the text itself is the primary, non-color cue). null for unknown/absent.
+// (the text itself is the primary, non-color cue). null for Beyla.
 export function securityGlyphVariant(flow: Flow): EdgeSecurityVariant | null {
   return edgeSecurityVariant(flow, true)
 }

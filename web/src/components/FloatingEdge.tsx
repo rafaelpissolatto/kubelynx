@@ -1,7 +1,7 @@
 import { useContext, useState, type CSSProperties } from 'react'
 import { BaseEdge, useInternalNode, useStore, getSmoothStepPath, type EdgeProps, type InternalNode } from '@xyflow/react'
 import { getEdgeParams } from '../lib/floatingEdge'
-import type { TrafficDots } from '../lib/layout'
+import { EDGE_STROKE_WIDTH, type TrafficDots } from '../lib/layout'
 import type { Flow } from '../lib/topology'
 import { EdgeDisplayContext, edgeLabelText } from '../lib/displayOptions'
 import { edgeSecurityVariant, mtlsDescription, type EdgeSecurityVariant } from '../lib/flowSecurity'
@@ -262,6 +262,45 @@ function SecurityBadge({
       <circle r={BADGE_RADIUS} className="flow-edge__badge-disc" />
       <SecurityGlyphShape variant={variant} />
     </g>
+  )
+}
+
+// A short horizontal edge drawn the way FloatingEdge draws one (#105): the
+// same line, arrowhead and badge, with the same classes, so the legend's
+// samples follow every edge style rule instead of restyling a plain line.
+// `variant` null draws an unstyled edge (plaintext/mixed with the highlight
+// off). Rendered in screen pixels at a 1:1 scale, outside React Flow's
+// store, so it uses the constants directly rather than the zoom selectors.
+const LEGEND_SAMPLE_WIDTH = 52
+const LEGEND_SAMPLE_HEIGHT = 2 * BADGE_RADIUS + 2
+
+export function EdgeLegendSample({ variant }: { variant: EdgeSecurityVariant | null }) {
+  const y = LEGEND_SAMPLE_HEIGHT / 2
+  const end = LEGEND_SAMPLE_WIDTH - 1
+  return (
+    <svg
+      className="security-legend__sample"
+      width={LEGEND_SAMPLE_WIDTH}
+      height={LEGEND_SAMPLE_HEIGHT}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <g className={variant ? `flow-edge--${variant}` : undefined}>
+        <path d={`M 1 ${y} L ${end} ${y}`} fill="none" className="react-flow__edge-path flow-edge__line" style={{ strokeWidth: EDGE_STROKE_WIDTH }} />
+        <path
+          d={ARROWHEAD_PATH}
+          transform={`translate(${end} ${y})`}
+          className="react-flow__edge-path flow-edge__direction"
+          style={{ strokeWidth: MARK_STROKE_WIDTH }}
+        />
+        {variant && (
+          <g className={`flow-edge__badge flow-edge__badge--${variant}`} transform={`translate(${end / 2} ${y})`}>
+            <circle r={BADGE_RADIUS} className="flow-edge__badge-disc" />
+            <SecurityGlyphShape variant={variant} />
+          </g>
+        )}
+      </g>
+    </svg>
   )
 }
 

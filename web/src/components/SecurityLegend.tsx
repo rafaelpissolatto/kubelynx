@@ -1,40 +1,50 @@
+import { useState } from 'react'
 import { Panel } from '@xyflow/react'
-import type { EdgeSecurityVariant } from '../lib/flowSecurity'
-import { SecurityIcon } from './SecurityGlyph'
+import type { LegendStyle } from '../lib/flowSecurity'
+import { EdgeLegendSample } from './FloatingEdge'
 
 interface SecurityLegendProps {
-  // Display ▾ → Highlight plaintext edges. Off, the canvas draws plaintext
-  // and mixed edges plainly, so the legend lists only what's still drawn.
-  highlightPlaintext: boolean
+  // The edge styles on the canvas right now (lib/flowSecurity.ts
+  // legendStyles), so every drawn edge has exactly one row and no row
+  // describes something the canvas isn't showing (#105).
+  styles: readonly LegendStyle[]
+  // Whether the legend starts expanded. App.tsx starts it collapsed on the
+  // stacked phone layout (#97), where an open legend would cover edges.
+  defaultOpen: boolean
 }
 
-const ROWS: { variant: EdgeSecurityVariant; text: string }[] = [
-  { variant: 'mtls', text: 'mTLS' },
-  { variant: 'plaintext', text: 'Plaintext' },
-  { variant: 'mixed', text: 'Mixed mTLS / plaintext' },
-]
+const TEXT: Record<LegendStyle, string> = {
+  mtls: 'mTLS',
+  plaintext: 'Plaintext',
+  mixed: 'Mixed mTLS / plaintext',
+  unknown: 'mTLS unknown',
+  plain: 'Plaintext or mixed (not highlighted)',
+}
 
-// Key for the mTLS edge styling (issue #90), in the canvas's top-right
-// corner (Controls hold bottom-left, the minimap bottom-right). App.tsx
-// renders it only when at least one flow carries Flow.security, so a Beyla
-// graph never shows it. Real text beside each sample, not icons alone.
-export function SecurityLegend({ highlightPlaintext }: SecurityLegendProps) {
-  const rows = highlightPlaintext ? ROWS : ROWS.filter((row) => row.variant === 'mtls')
+// Key for the mTLS edge styling (issues #90, #105), in the canvas's
+// top-right corner (Controls hold bottom-left, the minimap bottom-right).
+// App.tsx renders it only when some drawn edge is an Istio flow, so a Beyla
+// graph never shows it. Each sample is drawn by EdgeLegendSample with the
+// edge's own classes, line, arrowhead and badge, so it can't drift from the
+// canvas; real text sits beside each sample, not icons alone. A native
+// <details> disclosure, so it can be folded out of the way (keyboard and
+// screen reader support come with the element).
+export function SecurityLegend({ styles, defaultOpen }: SecurityLegendProps) {
+  const [open, setOpen] = useState(defaultOpen)
+  if (styles.length === 0) return null
   return (
     <Panel position="top-right" className="security-legend">
-      <section aria-label="Edge mTLS legend">
-        <ul className="security-legend__list">
-          {rows.map(({ variant, text }) => (
-            <li key={variant} className="security-legend__row">
-              <svg className="security-legend__sample" width={28} height={8} aria-hidden="true" focusable="false">
-                <line x1={1} y1={4} x2={27} y2={4} className={`security-legend__line security-legend__line--${variant}`} />
-              </svg>
-              <SecurityIcon variant={variant} />
-              <span>{text}</span>
+      <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+        <summary className="security-legend__summary">mTLS legend</summary>
+        <ul className="security-legend__list" aria-label="Edge mTLS legend">
+          {styles.map((style) => (
+            <li key={style} className="security-legend__row">
+              <EdgeLegendSample variant={style === 'plain' ? null : style} />
+              <span>{TEXT[style]}</span>
             </li>
           ))}
         </ul>
-      </section>
+      </details>
     </Panel>
   )
 }
