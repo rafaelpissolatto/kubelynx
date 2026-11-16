@@ -8,6 +8,7 @@ import type { EdgeSecurityVariant } from '../lib/flowSecurity'
 // - mtls: closed shackle, solid body.
 // - plaintext: shackle swung open, solid body.
 // - mixed: closed shackle, half-filled body.
+// - unknown: closed shackle, empty (outline-only) body — status not reported.
 const SHACKLE_CLOSED = 'M -3 -0.5 V -3 A 3 3 0 0 1 3 -3 V -0.5'
 const SHACKLE_OPEN = 'M -3 -0.5 V -3 A 3 3 0 0 1 3 -3 V -4.5'
 
@@ -21,7 +22,9 @@ export function SecurityGlyphShape({ variant }: { variant: EdgeSecurityVariant }
         strokeWidth={1.5}
         strokeLinecap="round"
       />
-      {variant === 'mixed' ? (
+      {variant === 'unknown' ? (
+        <rect x={-4.25} y={-0.25} width={8.5} height={6} rx={1} fill="none" stroke="currentColor" strokeWidth={1.5} />
+      ) : variant === 'mixed' ? (
         <>
           <rect x={-4.25} y={-0.25} width={8.5} height={6} rx={1} fill="none" stroke="currentColor" strokeWidth={1.5} />
           <rect x={-4.25} y={-0.25} width={4.25} height={6} rx={1} fill="currentColor" />

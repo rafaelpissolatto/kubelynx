@@ -20,6 +20,7 @@ import {
   fetchTopology,
   flowId,
   TopologyError,
+  type Flow,
   type Graph,
   type ProtocolFilter as ProtocolFilterValue,
   type SourceFilter,
@@ -50,7 +51,7 @@ import { SemanticZoom, ZoomReadout } from './components/ZoomControls'
 import { canvasKeyAction } from './lib/canvasKeys'
 import { FloatingEdge } from './components/FloatingEdge'
 import { SecurityLegend } from './components/SecurityLegend'
-import { graphHasSecurity } from './lib/flowSecurity'
+import { legendStyles } from './lib/flowSecurity'
 import {
   clampFlowsPanelWidth,
   isStackedLayout,
@@ -580,9 +581,13 @@ function App() {
     () => ({ edgeLabels, trafficAnimation, highlightPlaintext }),
     [edgeLabels, trafficAnimation, highlightPlaintext],
   )
-  // The mTLS legend (issue #90) appears only when some flow carries
-  // Flow.security — i.e. never for Beyla.
-  const showSecurityLegend = state.status === 'ready' && graphHasSecurity(state.graph.edges)
+  // The mTLS legend (issues #90, #105) lists the security styles of the
+  // edges actually drawn — none for Beyla, whose flows carry no
+  // Flow.security, so no legend at all there.
+  const securityLegendStyles = useMemo(
+    () => legendStyles(renderedEdges.map((edge) => edge.data?.flow as Flow | undefined), highlightPlaintext),
+    [renderedEdges, highlightPlaintext],
+  )
 
   const searchCurrentIndex = searchCursor ? (emphasis?.matches.indexOf(searchCursor) ?? -1) : -1
 
@@ -979,7 +984,7 @@ function App() {
                     ariaLabel="Minimap"
                   />
                 )}
-                {showSecurityLegend && <SecurityLegend highlightPlaintext={highlightPlaintext} />}
+                <SecurityLegend styles={securityLegendStyles} defaultOpen={!stackedLayout} />
               </ReactFlow>
             </EdgeDisplayContext.Provider>
           )}

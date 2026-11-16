@@ -107,7 +107,7 @@ function portLabel({ protocol, port }: { protocol: string; port: string }): stri
 // Every flow line has the same weight; traffic volume is conveyed by the
 // moving dots (edgeTrafficDots) instead, so line thickness doesn't compete
 // with the direction arrowhead or the dots for attention.
-const EDGE_STROKE_WIDTH = 1.5
+export const EDGE_STROKE_WIDTH = 1.5
 
 // Traffic-rate-to-live-dots mapping (issue #44): busier edges carry more
 // dots, travelling faster, so a trickle and a firehose look proportionally
