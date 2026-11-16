@@ -26,8 +26,25 @@ ISTIO_REPO       = https://istio-release.r2.istio.io/charts
 ISTIO_CHARTS     = $(foreach c,base istiod cni ztunnel,$(DEV_CACHE)/charts/$(c)-$(ISTIO_VERSION).tgz)
 GATEWAY_API_CRDS = $(DEV_CACHE)/gateway-api-$(GATEWAY_API_VERSION)-standard-install.yaml
 
+# HTTPS gateway (dev/gateway/): NGINX Gateway Fabric serving *.localhost.
+# NGF 2.8.0 pins Gateway API v1.6.3 (GATEWAY_API_VERSION above); bump both
+# together. Host ports are baked in when kind creates the cluster: override
+# them (e.g. 8080/8443) to run next to another lab that already holds
+# 80/443, then `make clean setup`.
+NGF_VERSION ?= 2.8.0
+GATEWAY_HTTP_PORT ?= 80
+GATEWAY_HTTPS_PORT ?= 443
+# Server cert lives in CERT_DIR (gitignored, kept across `make clean`). Its
+# CA defaults to the same folder; set CA_DIR to reuse a CA you already
+# trust, e.g. CA_DIR=$$HOME/local/k8s/openobserve/gateway/certs.
+CERT_DIR ?= dev/gateway/certs
+CA_DIR ?= $(CERT_DIR)
+CA_NAME = kubelynx-dev-local-ca
+HTTPS_SUFFIX = $(if $(filter 443,$(GATEWAY_HTTPS_PORT)),,:$(GATEWAY_HTTPS_PORT))
+
 .PHONY: cluster deploy-prometheus deploy-beyla demo-traffic setup test \
         deploy-gateway-api deploy-istio demo-mesh istio-charts \
+        certs deploy-gateway trust-ca-windows trust-ca-wsl \
         port-prometheus logs-beyla clean all \
         image kind-load deploy-kubelynx port-kubelynx lint-chart \
         scan scan-tools scan-suppressions scan-govulncheck scan-deps scan-gosec \
@@ -40,7 +57,10 @@ cluster:
 	@if kind get clusters 2>/dev/null | grep -q "^$(CLUSTER_NAME)$$"; then \
 		echo "Cluster '$(CLUSTER_NAME)' already exists, skipping creation."; \
 	else \
-		kind create cluster --name $(CLUSTER_NAME) --config dev/kind/kind-config.yaml; \
+		mkdir -p $(DEV_CACHE); \
+		sed -e 's|@HTTP_PORT@|$(GATEWAY_HTTP_PORT)|' -e 's|@HTTPS_PORT@|$(GATEWAY_HTTPS_PORT)|' \
+			dev/kind/kind-config.yaml > $(DEV_CACHE)/kind-config.yaml; \
+		kind create cluster --name $(CLUSTER_NAME) --config $(DEV_CACHE)/kind-config.yaml; \
 	fi
 
 # --- Prometheus (kube-prometheus-stack, Beyla-discoverable) ---
@@ -112,12 +132,58 @@ demo-mesh:
 	kubectl wait --for=condition=available deployment/backend -n mesh-backend --timeout=300s
 	kubectl wait --for=condition=available deployment/frontend -n mesh-frontend --timeout=300s
 
+# --- HTTPS gateway (NGINX Gateway Fabric; host ports -> NodePort 30080/30443 via kind) ---
+# Local CA + *.localhost server cert (dev/scripts/gen-certs.sh).
+certs:
+	CERT_DIR=$(CERT_DIR) CA_DIR=$(CA_DIR) ./dev/scripts/gen-certs.sh
+
+# After demo-mesh and deploy-prometheus: the routes live in their namespaces.
+# Gateway API CRDs come from deploy-gateway-api (shared with Istio).
+deploy-gateway: certs deploy-gateway-api
+	helm upgrade --install ngf oci://ghcr.io/nginx/charts/nginx-gateway-fabric --version $(NGF_VERSION) \
+		--namespace nginx-gateway --create-namespace \
+		--values dev/gateway/ngf-values.yaml \
+		--wait --timeout 5m
+	kubectl -n nginx-gateway create secret tls localhost-tls \
+		--cert=$(CERT_DIR)/tls.crt --key=$(CERT_DIR)/tls.key \
+		--dry-run=client -o yaml | kubectl apply -f -
+	sed 's|@HTTPS_PORT@|$(GATEWAY_HTTPS_PORT)|' dev/gateway/gateway.yaml | kubectl apply -f -
+	kubectl wait --for=condition=Programmed gateway/gateway -n nginx-gateway --timeout=180s
+	@# Programmed is set before the per-Gateway NGINX pod (gateway-nginx) is up.
+	kubectl rollout status deployment/gateway-nginx -n nginx-gateway --timeout=180s
+
+# Adds the CA to your Windows user's Trusted Root store, so Edge/Chrome (and
+# Firefox, which reads Windows roots by default) accept the gateway cert.
+# Windows shows a confirmation dialog. Undo with certmgr.msc (Trusted Root
+# Certification Authorities > "KubeLynx dev local CA").
+trust-ca-windows: certs
+	powershell.exe -NoProfile -Command "Import-Certificate -FilePath '$$(wslpath -w $(CERT_DIR)/ca.crt)' -CertStoreLocation Cert:\\CurrentUser\\Root | Format-List Subject,Thumbprint"
+
+# Adds the CA to WSL's system store (curl, Go, Python, ... ; asks for sudo)
+# and, when certutil (libnss3-tools) is installed, to the NSS database that
+# Linux Chrome/Chromium read. Undo: sudo rm
+# /usr/local/share/ca-certificates/$(CA_NAME).crt && sudo update-ca-certificates
+# --fresh; certutil -D -d sql:$$HOME/.pki/nssdb -n $(CA_NAME).
+trust-ca-wsl: certs
+	sudo cp $(CERT_DIR)/ca.crt /usr/local/share/ca-certificates/$(CA_NAME).crt
+	sudo update-ca-certificates
+	@if command -v certutil >/dev/null; then \
+		mkdir -p $$HOME/.pki/nssdb; \
+		[ -f $$HOME/.pki/nssdb/cert9.db ] || certutil -N -d sql:$$HOME/.pki/nssdb --empty-password; \
+		certutil -A -d sql:$$HOME/.pki/nssdb -t "C,," -n $(CA_NAME) -i $(CERT_DIR)/ca.crt; \
+		echo "Added to NSS ($$HOME/.pki/nssdb) for Linux Chrome/Chromium."; \
+	else \
+		echo "certutil not found: skipped Linux browsers' NSS store (sudo apt install libnss3-tools)."; \
+	fi
+
 # --- Full setup ---
-setup: cluster deploy-prometheus deploy-beyla demo-traffic deploy-istio demo-mesh
+setup: cluster deploy-prometheus deploy-beyla demo-traffic deploy-istio demo-mesh deploy-gateway
 	@echo ""
 	@echo "Setup complete."
-	@echo "Prometheus: make port-prometheus"
-	@echo "Demo:       demo-* (plain, Beyla only), mesh-* (Istio ambient + waypoint)"
+	@echo "Prometheus: https://prometheus.localhost$(HTTPS_SUFFIX)  (or make port-prometheus)"
+	@echo "KubeLynx:   https://kubelynx.localhost$(HTTPS_SUFFIX)  after make deploy-kubelynx"
+	@echo "Demo:       https://demo.localhost$(HTTPS_SUFFIX) (plain, Beyla only), https://mesh.localhost$(HTTPS_SUFFIX) (Istio ambient + waypoint)"
+	@echo "Trust CA:   make trust-ca-windows (Windows browsers), make trust-ca-wsl (WSL)"
 	@echo "Validate:   make test"
 
 # --- KubeLynx (single image + Helm chart) ---
@@ -139,6 +205,11 @@ deploy-kubelynx: image kind-load
 		--wait --timeout 2m
 	kubectl rollout restart deployment/kubelynx -n $(KUBELYNX_NAMESPACE)
 	kubectl rollout status deployment/kubelynx -n $(KUBELYNX_NAMESPACE) --timeout=2m
+	@# https://kubelynx.localhost, when the gateway (make deploy-gateway) is up.
+	@if kubectl get gateway/gateway -n nginx-gateway >/dev/null 2>&1; then \
+		kubectl apply -n $(KUBELYNX_NAMESPACE) -f dev/gateway/kubelynx-route.yaml; \
+		echo "KubeLynx: https://kubelynx.localhost$(HTTPS_SUFFIX)"; \
+	fi
 
 port-kubelynx:
 	kubectl port-forward -n $(KUBELYNX_NAMESPACE) svc/kubelynx 8080:80
@@ -217,7 +288,8 @@ lint-workflows:
 
 # --- Validation ---
 test:
-	NAMESPACE=$(NAMESPACE) ./dev/scripts/validate.sh
+	NAMESPACE=$(NAMESPACE) CA_CERT=$(CERT_DIR)/ca.crt GATEWAY_HTTP_PORT=$(GATEWAY_HTTP_PORT) \
+		GATEWAY_HTTPS_PORT=$(GATEWAY_HTTPS_PORT) KUBELYNX_NAMESPACE=$(KUBELYNX_NAMESPACE) ./dev/scripts/validate.sh
 
 # --- Utilities ---
 port-prometheus:

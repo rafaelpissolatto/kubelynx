@@ -1,0 +1,17 @@
+# nginx-gateway-fabric Helm values (oci://ghcr.io/nginx/charts/nginx-gateway-fabric).
+# The control plane provisions one NGINX data plane per Gateway; these
+# settings apply to that data plane's Service.
+nginx:
+  service:
+    # kind has no LoadBalancer implementation, so expose the listeners on
+    # fixed NodePorts that kind maps to host ports (dev/kind/kind-config.yaml).
+    type: NodePort
+    # The port mapping only exists on the control-plane node, but the NGINX
+    # pod can land on any node. Cluster lets kube-proxy forward from the
+    # control-plane's NodePort to wherever it runs (Local would drop it).
+    externalTrafficPolicy: Cluster
+    nodePorts:
+      - port: 30080
+        listenerPort: 80
+      - port: 30443
+        listenerPort: 443
