@@ -108,7 +108,7 @@ Other make targets:
 
 `*.localhost` resolves to 127.0.0.1, so there's nothing to add to `/etc/hosts`. kind maps host ports 80 and 443 to the gateway's NodePorts (30080/30443). On WSL, Windows reaches them through WSL's localhost forwarding.
 
-The certificate comes from a local CA that `make certs` creates in `dev/gateway/certs/`. That folder is gitignored and kept across `make clean`, so you only trust the CA once:
+The certificate comes from a local CA that `make certs` creates in `dev/gateway/certs/`. That folder is gitignored and kept across `make clean`, so you only trust the CA once. The CA is limited to `localhost` names and `127.0.0.1` (an X.509 name constraint), so trusting it can't vouch for any other site:
 
 ```sh
 make trust-ca-windows   # Windows browsers (shows a confirmation dialog)
@@ -117,7 +117,7 @@ make trust-ca-wsl       # WSL: curl, Go, Python; Linux Chrome too if certutil (l
 
 Two options cover other setups:
 
-- **Reuse a CA you already trust**, such as the OpenObserve lab's: `make certs CA_DIR=~/local/k8s/openobserve/gateway/certs` before `make setup`. That CA is only read; the server cert is still written to `dev/gateway/certs/`.
+- **Reuse a CA you already trust**, such as the OpenObserve lab's: `make certs CA_DIR=~/local/k8s/openobserve/gateway/certs` before `make setup`. The folder must hold both `ca.crt` and `ca.key`. That CA is only read, never created or overwritten (a missing file is an error), and the server cert is still written to `dev/gateway/certs/`.
 - **Run next to another lab that already holds ports 80/443**: `make clean setup GATEWAY_HTTP_PORT=8080 GATEWAY_HTTPS_PORT=8443`, then use `https://kubelynx.localhost:8443`. Pass the same ports to `make test`. kind only applies port mappings when it creates the cluster, which is why `clean` is needed.
 
 ### Backend flags

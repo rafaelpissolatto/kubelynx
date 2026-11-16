@@ -20,10 +20,17 @@ CA_DIR="${CA_DIR:-$DIR}"
 # hostnames are listed too.
 HOSTNAMES="${HOSTNAMES:-kubelynx.localhost prometheus.localhost demo.localhost mesh.localhost *.localhost localhost}"
 
-SAN=$(for h in $HOSTNAMES; do printf 'DNS:%s,' "$h"; done)
+SAN=$(set -f; for h in $HOSTNAMES; do printf 'DNS:%s,' "$h"; done)
 SAN="${SAN}IP:127.0.0.1"
 
-mkdir -p "$DIR" "$CA_DIR"
+# A CA_DIR other than CERT_DIR is a CA you already trust: it's only read,
+# never created or overwritten, so a typo or a folder with just ca.crt
+# fails instead of silently replacing that CA.
+if [[ "$CA_DIR" != "$DIR" && ! ( -f "$CA_DIR/ca.crt" && -f "$CA_DIR/ca.key" ) ]]; then
+  echo "CA_DIR=$CA_DIR must contain ca.crt and ca.key; it is only read, never written." >&2
+  exit 1
+fi
+mkdir -p "$DIR"
 CA_CRT="$(cd "$CA_DIR" && pwd)/ca.crt"
 CA_KEY="$(cd "$CA_DIR" && pwd)/ca.key"
 
@@ -47,7 +54,8 @@ if [[ ! -f "$CA_KEY" || ! -f "$CA_CRT" ]]; then
     -keyout "$CA_KEY" -out "$CA_CRT" \
     -subj "/CN=KubeLynx dev local CA" \
     -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
-    -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+    -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -addext "nameConstraints=critical,permitted;DNS:localhost,permitted;IP:127.0.0.1/255.255.255.255" 2>/dev/null
   chmod 600 "$CA_KEY"
 fi
 
